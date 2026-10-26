@@ -55,7 +55,7 @@ With stepping on, the questions are sections after the reply:
 
 **Stepping and answering.** With stepping on, answering a question in Claude Code does not read the next one. Claude Code tells plugins nothing until the whole set is answered, so press **Ctrl+Alt+Down** to hear the next question.
 
-**Thinking before a question.** If Claude only thought before asking (Claude Code shows the thinking but sends plugins no text), Sonara reads that last thinking before the question.
+**Thinking before a question.** If Claude only thought before asking (Claude Code shows the thinking but sends plugins no text), Sonara reads that last thinking before the question. Claude Code often saves the question a moment after it appears, so the question can wait up to 2 seconds for that text; the choice chime plays at once.
 
 ## The sounds
 

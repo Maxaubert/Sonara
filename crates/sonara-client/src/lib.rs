@@ -26,5 +26,6 @@ pub use conn::{attach, Conn, TIMEOUT};
 pub use hello::{Hello, PRODUCT};
 pub use home::{default_home, home, home_from, stopped, RUNTIME_FILE, STOPPED};
 pub use runtime::{
-    connect, read_runtime, runtime_args, runtime_exe, start_runtime, Runtime, PROBE, RUNTIME_EXE,
+    connect, read_runtime, runtime_args, runtime_exe, spawn_detached, start_runtime, Runtime,
+    PROBE, RUNTIME_EXE,
 };

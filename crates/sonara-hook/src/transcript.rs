@@ -15,9 +15,13 @@
 //! the rows of one message share `message.id`.
 //!
 //! Claude Code mostly writes a question's rows only after `PreToolUse`
-//! returns, so the lookup usually misses: waiting longer in the hook does
+//! returns (about a second after it starts), so waiting in the hook does
 //! not help (#358 polled for 1 s, found nothing and delayed every question;
-//! reverted, 2026-10-26).
+//! reverted, 2026-10-26). The hook looks once (`look`); when the tool use
+//! is not on disk yet it marks the question `lead_in_pending` and a
+//! detached follow-up (`sonara-hook.exe --follow-lead-in`) polls for it
+//! (`lead_in`, every `POLL` until its deadline) and sends the lead-in, or
+//! an empty one, while the runtime holds the question (#360).
 //!
 //! Only the last `TAIL` bytes are read, and a row is parsed only when it
 //! holds the id it is looked for by. Whatever goes wrong (no file, an IO
@@ -33,23 +37,48 @@ use std::time::{Duration, Instant};
 pub const TAIL: u64 = 2 * 1024 * 1024;
 /// The longest lead-in, in characters (clipped at a sentence end).
 pub const THINKING_MAX: usize = 4000;
-/// The wait before the one retry when the tool use is not on disk yet.
-pub const RETRY_AFTER: Duration = Duration::from_millis(100);
+/// The wait between two looks while the tool use is not on disk yet.
+pub const POLL: Duration = Duration::from_millis(50);
 
-/// The thinking to read before the question `tool_use_id`, from the
-/// transcript at `path` (module docs). One retry after `RETRY_AFTER` when
-/// the tool use is not found, if `deadline` allows it.
+/// One look for the lead-in of the question `tool_use_id` (no wait).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lead {
+    /// The text or thinking to read first.
+    Text(String),
+    /// Its message has nothing to read, or the transcript cannot be read.
+    None,
+    /// The tool use is not on disk yet: the lead-in comes later.
+    Later,
+}
+
+/// One look at the transcript at `path` for the lead-in of the question
+/// `tool_use_id` (module docs).
+pub fn look(path: &Path, tool_use_id: &str) -> Lead {
+    if tool_use_id.is_empty() {
+        return Lead::None;
+    }
+    match read_tail(path).map(|t| find(&t, tool_use_id)) {
+        Some(Found::Message(Some(t))) => Lead::Text(t),
+        Some(Found::NoToolUse) => Lead::Later,
+        _ => Lead::None,
+    }
+}
+
+/// The lead-in of the question `tool_use_id`, from the transcript at
+/// `path`: looked for every `POLL` while the tool use is not on disk,
+/// until `deadline` (the follow-up, #360).
 pub fn lead_in(path: &Path, tool_use_id: &str, deadline: Instant) -> Option<String> {
     if tool_use_id.is_empty() {
         return None;
     }
-    match read_tail(path).map(|t| find(&t, tool_use_id)) {
-        Some(Found::Message(lead)) => lead,
-        Some(Found::NoToolUse) if Instant::now() + RETRY_AFTER < deadline => {
-            std::thread::sleep(RETRY_AFTER);
-            lead_in_from(&read_tail(path)?, tool_use_id)
+    loop {
+        // A failed read (Claude Code may be writing the file) is tried
+        // again like a tool use not on disk yet.
+        match read_tail(path).map(|t| find(&t, tool_use_id)) {
+            Some(Found::Message(lead)) => return lead,
+            _ if Instant::now() + POLL < deadline => std::thread::sleep(POLL),
+            _ => return None,
         }
-        _ => None,
     }
 }
 
@@ -474,6 +503,62 @@ And a second part."
         std::fs::write(&path, body).unwrap();
         let soon = Instant::now();
         assert_eq!(lead_in(&path, "t1", soon).as_deref(), Some("At the end."));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_look_says_whether_the_lead_in_is_there_none_or_later() {
+        let dir = std::env::temp_dir().join(format!("sonara-look-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("t.jsonl");
+        std::fs::write(
+            &path,
+            lines(&[
+                row("m1", thinking("Ten files.")),
+                row("m1", tool_use("t1")),
+                row("m2", tool_use("t2")),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(look(&path, "t1"), Lead::Text("Ten files.".into()));
+        assert_eq!(look(&path, "t2"), Lead::None);
+        assert_eq!(look(&path, "t3"), Lead::Later, "not on disk yet");
+        assert_eq!(look(&path, ""), Lead::None);
+        assert_eq!(look(Path::new("Z:/no/such.jsonl"), "t1"), Lead::None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_follow_up_finds_a_question_written_to_disk_late() {
+        // Claude Code writes the question's rows about a second after the
+        // hook starts (2026-10-26): the follow-up polls for them.
+        let dir = std::env::temp_dir().join(format!("sonara-late-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("t.jsonl");
+        std::fs::write(&path, lines(&[row("m0", text("Earlier."))])).unwrap();
+        let late = lines(&[
+            row("m1", thinking("Ten files, not eleven.")),
+            row("m1", tool_use("t1")),
+        ]);
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(500));
+                let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+                std::io::Write::write_all(&mut f, late.as_bytes()).unwrap();
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let lead = lead_in(&path, "t1", deadline);
+        writer.join().unwrap();
+        assert_eq!(lead.as_deref(), Some("Ten files, not eleven."));
+        // Never written: it gives up at the deadline.
+        let start = Instant::now();
+        assert_eq!(
+            lead_in(&path, "t9", start + Duration::from_millis(300)),
+            None
+        );
+        assert!(start.elapsed() < Duration::from_millis(300) + POLL);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

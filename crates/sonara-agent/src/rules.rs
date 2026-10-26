@@ -186,7 +186,27 @@ pub enum Timer {
     Watchdog { seq: u64 },
     /// Deltas held ahead of a missing one waited `DELTA_GAP` (#286).
     Gap { channel: String, gen: u64 },
+    /// A question waited `LEAD_IN_WAIT` for its late lead-in (#360).
+    LeadIn { channel: String, gen: u64 },
 }
+
+/// A question waiting for its late lead-in (#360).
+#[derive(Debug)]
+struct LeadInWait {
+    /// The timer's generation.
+    gen: u64,
+    /// The question's `lead_in_id`.
+    id: Option<String>,
+    /// The texts (folded) of the whole blocks that came while it waited:
+    /// a lead-in with the same text was read already.
+    seen: Vec<String>,
+}
+
+/// How long a question whose lead-in comes later (`lead_in_pending`, #360)
+/// waits for it. Claude Code writes the question to its transcript about a
+/// second after `PreToolUse` (2026-10-26); past the wait the question is
+/// read alone and a lead-in that still comes is dropped.
+pub const LEAD_IN_WAIT: Duration = Duration::from_secs(2);
 
 /// How long a delta that arrived ahead of a missing one waits for it
 /// (#286). The hook processes of one block race by milliseconds (the log of
@@ -365,6 +385,13 @@ pub struct Ask {
     /// of two or more, only the first is spoken (with "Question 1 of N.");
     /// the others are kept for the question navigation.
     pub set: Option<(usize, usize)>,
+    /// Its lead-in comes after it (#360): the hook did not find it in the
+    /// transcript yet and sends it later. The question waits for it, at
+    /// most `LEAD_IN_WAIT`.
+    pub lead_in_pending: bool,
+    /// The id that ties the late lead-in to this question (the hook: the
+    /// tool use's id): a late lead-in with another id is dropped.
+    pub lead_in_id: Option<String>,
 }
 
 impl Ask {
@@ -378,6 +405,8 @@ impl Ask {
             hint: None,
             hint_once: None,
             set: None,
+            lead_in_pending: false,
+            lead_in_id: None,
         }
     }
 }
@@ -535,6 +564,8 @@ struct Turn {
     /// the same text from `MessageDisplay` later in the turn is not read
     /// again.
     lead_in: Option<String>,
+    /// Decisions wait in `pending` for a late lead-in (#360).
+    lead_in_wait: Option<LeadInWait>,
     /// The final reply the hook sent with `Stop` (`read_mode` `final`),
     /// and the text before it.
     reply: Option<(String, Option<String>)>,
@@ -593,6 +624,7 @@ impl Turn {
             questions: None,
             read_set: None,
             lead_in: None,
+            lead_in_wait: None,
             reply: None,
             replied: None,
             held_prose: Vec::new(),
@@ -880,14 +912,107 @@ impl Rules {
         delta: &str,
         t: Option<f64>,
     ) -> Result<Vec<Action>, Stale> {
-        if self.settings.read_mode == ReadMode::Final
-            && !self.turns.get(channel).is_some_and(|c| c.stale(turn, t))
-        {
-            self.drop_held(channel, "text before the question");
+        self.take_lead_in(channel, turn, delta, None, t)
+    }
+
+    /// A question's lead-in that comes after it (#360, `stream` with
+    /// `lead_in` and `lead_in_id`): read first only while the question with
+    /// that id waits, then the question goes; an empty one reads nothing
+    /// and lets it go. Any other (its question answered, read already, or
+    /// another one) is dropped.
+    pub fn late_lead_in(
+        &mut self,
+        channel: &str,
+        turn: Option<&str>,
+        delta: &str,
+        id: &str,
+        t: Option<f64>,
+    ) -> Result<Vec<Action>, Stale> {
+        self.take_lead_in(channel, turn, delta, Some(id), t)
+    }
+
+    fn take_lead_in(
+        &mut self,
+        channel: &str,
+        turn: Option<&str>,
+        delta: &str,
+        id: Option<&str>,
+        t: Option<f64>,
+    ) -> Result<Vec<Action>, Stale> {
+        if self.turns.get(channel).is_some_and(|c| c.stale(turn, t)) {
+            return Err(Stale);
         }
-        let out = self.stream(channel, turn, delta, 0, true, t)?;
-        self.turn(channel).lead_in = Some(fold(delta));
+        let folded = fold(delta);
+        let wait = self
+            .turns
+            .get(channel)
+            .and_then(|c| c.lead_in_wait.as_ref());
+        let waiting = wait.is_some_and(|w| id.is_none() || w.id.as_deref() == id);
+        let seen = wait.is_some_and(|w| w.seen.contains(&folded));
+        if id.is_some() && !waiting {
+            self.note(
+                Some(channel),
+                "prose",
+                "dropped: a late lead-in whose question is not waiting (#360)".into(),
+                Some(delta.to_string()),
+            );
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        if seen && !folded.is_empty() {
+            self.note(
+                Some(channel),
+                "prose",
+                "dropped: the late lead-in was read already (#360)".into(),
+                Some(delta.to_string()),
+            );
+        } else if !delta.trim().is_empty() {
+            if self.settings.read_mode == ReadMode::Final {
+                self.drop_held(channel, "text before the question");
+            }
+            out = self.stream(channel, turn, delta, 0, true, t)?;
+            self.turn(channel).lead_in = Some(folded);
+        }
+        if waiting {
+            self.release_lead_in_wait(&mut out, channel);
+        }
         Ok(out)
+    }
+
+    /// The decisions that waited for a late lead-in go, in order (#360).
+    /// With summaries on they go through the settle window, now that the
+    /// lead-in is there to summarize.
+    fn release_lead_in_wait(&mut self, out: &mut Vec<Action>, channel: &str) {
+        self.turn(channel).lead_in_wait = None;
+        if self.summaries() {
+            self.arm_settle(out, channel);
+            return;
+        }
+        let items = std::mem::take(&mut self.turn(channel).pending);
+        for item in items {
+            self.enqueue_or_hold(out, channel, item, false);
+        }
+    }
+
+    /// Start waiting for the late lead-in of `ask` (#360), unless a
+    /// question of the channel waits already.
+    fn wait_lead_in(&mut self, out: &mut Vec<Action>, channel: &str, ask: &Ask) {
+        if self.turn(channel).lead_in_wait.is_some() {
+            return;
+        }
+        let gen = self.gen();
+        self.turn(channel).lead_in_wait = Some(LeadInWait {
+            gen,
+            id: ask.lead_in_id.clone(),
+            seen: Vec::new(),
+        });
+        out.push(Action::Timer {
+            after: LEAD_IN_WAIT,
+            timer: Timer::LeadIn {
+                channel: channel.to_string(),
+                gen,
+            },
+        });
     }
 
     /// The final reply of the turn, sent by the hook with `Stop`: the
@@ -973,6 +1098,10 @@ impl Rules {
         }
         let mut out = Vec::new();
         let c = self.turn(channel);
+        if let (0, true, Some(w)) = (index, is_final, c.lead_in_wait.as_mut()) {
+            // The same text as a late lead-in is not read twice (#360).
+            w.seen.push(fold(delta));
+        }
         if index == 0 && is_final && c.lead_in.as_deref() == Some(fold(delta).as_str()) {
             // The text the hook already sent as a question's lead-in.
             c.lead_in = None;
@@ -1264,6 +1393,7 @@ impl Rules {
         c.settle_gen = settle_gen;
         c.settle_armed = false;
         c.pending.clear();
+        c.lead_in_wait = None;
         c.held = None;
         c.inflight = 0;
         c.last_token = 0;
@@ -1479,7 +1609,26 @@ impl Rules {
                 Some(item.text.clone()),
             );
             self.turn(channel).pending.push(item);
+            if ask.lead_in_pending {
+                // The settle waits for the late lead-in too (#360).
+                self.wait_lead_in(&mut out, channel, ask);
+            }
             self.arm_settle(&mut out, channel);
+        } else if ask.lead_in_pending || self.turn(channel).lead_in_wait.is_some() {
+            // Its lead-in comes later (#360); the questions after it wait
+            // with it, in order.
+            let (text, kind) = (item.text.clone(), item.kind);
+            self.turn(channel).pending.push(item);
+            self.wait_lead_in(&mut out, channel, ask);
+            self.note(
+                Some(channel),
+                kind,
+                format!(
+                    "waits for its lead-in (at most {} ms)",
+                    LEAD_IN_WAIT.as_millis()
+                ),
+                Some(text),
+            );
         } else if kind == "permission" && self.settings.read_mode == ReadMode::Final {
             // Read on its own: the held text waits for the turn end.
             let c = self.turn(channel);
@@ -2064,6 +2213,10 @@ impl Rules {
                     return out;
                 }
                 c.settle_armed = false;
+                if c.lead_in_wait.is_some() {
+                    // The late lead-in re-arms it (#360).
+                    return out;
+                }
                 let items = std::mem::take(&mut c.pending);
                 if items.is_empty() {
                     self.maybe_summarize(&mut out, channel, false, focused);
@@ -2096,6 +2249,24 @@ impl Rules {
                     if *seq >= self.serve_seq && !self.parked.contains_key(seq) {
                         self.land(&mut out, Some(*seq), release);
                     }
+                }
+            }
+            Timer::LeadIn { channel, gen } => {
+                if self
+                    .turns
+                    .get(channel)
+                    .is_some_and(|c| c.lead_in_wait.as_ref().is_some_and(|w| w.gen == *gen))
+                {
+                    self.note(
+                        Some(channel),
+                        "question",
+                        format!(
+                            "read without its lead-in: none came in {} ms",
+                            LEAD_IN_WAIT.as_millis()
+                        ),
+                        None,
+                    );
+                    self.release_lead_in_wait(&mut out, channel);
                 }
             }
             Timer::Gap { channel, gen } => {

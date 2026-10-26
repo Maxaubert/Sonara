@@ -5,9 +5,10 @@
 #![windows_subsystem = "windows"]
 
 use serde_json::Value;
-use sonara_client::{deliver, home, runtime_args, runtime_exe};
+use sonara_client::{deliver, home, runtime_args, runtime_exe, spawn_detached, Delivery};
 use sonara_hook::{
-    debug_log, log, log_line, map_event_full, outcome, stamp, transcript, HELLO, START_BUDGET,
+    debug_log, follow_job, follow_message, log, log_line, map_event_full, outcome, stamp,
+    transcript, FOLLOW_ARG, FOLLOW_FOR, HELLO, START_BUDGET,
 };
 use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -27,6 +28,10 @@ fn run(t0: f64, started: Instant) {
         return;
     }
     let event = std::env::args().nth(1).unwrap_or_default();
+    if event == FOLLOW_ARG {
+        follow(&std::env::args().nth(2).unwrap_or_default(), started);
+        return;
+    }
     let mut raw = Vec::new();
     let _ = std::io::stdin().read_to_end(&mut raw);
     // Optional capture of the raw payload (golden fixtures), before any
@@ -48,9 +53,9 @@ fn run(t0: f64, started: Instant) {
         .and_then(|t| serde_json::from_str(t).ok())
         .filter(Value::is_object)
         .unwrap_or_else(|| Value::Object(Default::default()));
-    // A question's lead-in (#283) shares the start budget.
-    let lead_in =
-        |path: &std::path::Path, id: &str| transcript::lead_in(path, id, started + START_BUDGET);
+    // A question's lead-in (#283): one look; a question not on disk yet
+    // gets its lead-in from the follow-up (#360).
+    let lead_in = |path: &std::path::Path, id: &str| transcript::look(path, id);
     let before_reply = |path: &std::path::Path| transcript::before_reply(path);
     let mut msgs = map_event_full(&event, &payload, &env, &lead_in, &before_reply);
     stamp(&mut msgs, t0);
@@ -75,12 +80,52 @@ fn run(t0: f64, started: Instant) {
             TIMEOUT,
         ))
     };
+    let delivered = matches!(delivery, Some(Delivery::Sent | Delivery::Started));
+    if let Some(job) = follow_job(&payload, &msgs).filter(|_| delivered) {
+        if let Ok(me) = std::env::current_exe() {
+            let _ = spawn_detached(&me, &[FOLLOW_ARG.to_string(), job.to_string()]);
+        }
+    }
     // The troubleshooting log (#219), last, so it never delays delivery.
     let line = log_line(
         &event,
         &raw,
         &msgs,
         outcome(delivery),
+        started.elapsed(),
+        debug_log(&home),
+    );
+    log(&home, &line);
+}
+
+/// The lead-in follow-up of a question (#360): wait for the question to
+/// reach the transcript, then send its lead-in (empty when there is none,
+/// so the runtime stops holding the question). Never starts the runtime.
+fn follow(job: &str, started: Instant) {
+    let Ok(job) = serde_json::from_str::<Value>(job) else {
+        return;
+    };
+    let Some(home) = home(&env) else {
+        return;
+    };
+    let path = job["transcript_path"].as_str().unwrap_or("");
+    let id = job["tool_use_id"].as_str().unwrap_or("");
+    let lead = transcript::lead_in(std::path::Path::new(path), id, started + FOLLOW_FOR);
+    let msgs = [follow_message(&job, lead.as_deref())];
+    let delivery = deliver(
+        &home,
+        &HELLO,
+        &msgs,
+        None,
+        &[],
+        Instant::now() + START_BUDGET,
+        TIMEOUT,
+    );
+    let line = log_line(
+        "FollowLeadIn",
+        b"{}",
+        &msgs,
+        outcome(Some(delivery)),
         started.elapsed(),
         debug_log(&home),
     );

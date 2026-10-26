@@ -364,3 +364,69 @@ fn a_question_without_text_sends_its_thinking_first() {
         (json!(0), json!(1))
     );
 }
+
+// -- a question not on disk yet (#360) --------------------------------------
+
+#[test]
+fn a_question_written_to_the_transcript_late_gets_its_lead_in_from_the_follow_up() {
+    // Claude Code writes the question to its transcript about a second
+    // after PreToolUse (Wallet session, 2026-10-26). The hook sends the ask
+    // marked lead_in_pending at once and returns; a detached follow-up
+    // sends the thinking when the rows land.
+    let home = Home::new("follow");
+    let rx = fake_runtime(&home);
+    let transcript = home.dir.join("t.jsonl");
+    std::fs::write(&transcript, "{\"type\":\"user\"}\n").unwrap();
+    let payload = json!({
+        "session_id": "s1",
+        "transcript_path": transcript,
+        "tool_use_id": "toolu_late",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [{"question": "Upload?", "options": [{"label": "Yes"}]}]}
+    });
+    let started = Instant::now();
+    assert_eq!(
+        run(&home, "PreToolUse", payload.to_string().as_bytes(), &[]),
+        0
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(900),
+        "the hook does not wait for the transcript"
+    );
+    let got = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let kinds: Vec<&str> = got.iter().map(|m| m["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["hello", "ask"]);
+    assert_eq!(got[1]["lead_in_pending"], true);
+    assert_eq!(got[1]["lead_in_id"], "toolu_late");
+    let t = got[1]["t"].clone();
+    let row = |block: Value| {
+        json!({"type": "assistant", "message": {"id": "m1", "content": [block]}}).to_string()
+    };
+    let rows = [
+        row(json!({"type": "thinking", "thinking": "Ten files, not eleven."})),
+        row(json!({"type": "tool_use", "id": "toolu_late", "name": "AskUserQuestion"})),
+    ]
+    .join("\n")
+        + "\n";
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&transcript)
+        .unwrap();
+    f.write_all(rows.as_bytes()).unwrap();
+    drop(f);
+    let got = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let kinds: Vec<&str> = got.iter().map(|m| m["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["hello", "stream"]);
+    assert_eq!(got[1]["lead_in"], true);
+    assert_eq!(got[1]["delta"], "Ten files, not eleven.");
+    assert_eq!(got[1]["channel"], "s1");
+    assert_eq!(got[1]["t"], t, "stamped like its question");
+    assert_eq!(got[1]["lead_in_id"], "toolu_late", "tied to its question");
+    // The follow-up logs its delivery.
+    let end = Instant::now() + Duration::from_secs(5);
+    while !hook_log(&home).contains("FollowLeadIn") {
+        assert!(Instant::now() < end, "{}", hook_log(&home));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
