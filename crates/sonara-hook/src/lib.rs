@@ -43,7 +43,10 @@
 //!   with no text its last thinking block (read from the end of the
 //!   session's transcript, `transcript`), goes first as one final `stream`
 //!   marked `lead_in`, so the answer before the question is read (#283;
-//!   #323: `MessageDisplay` mostly never brings it).
+//!   #323: `MessageDisplay` mostly never brings it). Claude Code mostly
+//!   writes the question to the transcript only after the hook (#360):
+//!   then the first `ask` carries `lead_in_pending` and a detached
+//!   follow-up (`FOLLOW_ARG`) sends the lead-in when it is on disk.
 //!   `ExitPlanMode` -> `ask` `plan` (PLAN).
 //!   Any other tool -> `tool` with a short summary (TOOL).
 //! - `PostToolUse` `AskUserQuestion` -> `answered` (CHOICE_ANSWERED).
@@ -77,6 +80,7 @@ use std::time::Duration;
 mod project;
 pub mod transcript;
 pub use project::{basename, project_label};
+pub use transcript::Lead;
 
 /// How long a hook may spend starting the runtime and waiting for it.
 pub const START_BUDGET: Duration = Duration::from_secs(1);
@@ -277,8 +281,18 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
 
 /// How the hook finds the lead-in of a question (#283): the transcript's
 /// path and the tool use's id give the message's text, or its last
-/// thinking block when it has no text (`transcript::lead_in`).
-pub type LeadIn<'a> = &'a dyn Fn(&Path, &str) -> Option<String>;
+/// thinking block when it has no text, or `Later` when the question is
+/// not on disk yet (`transcript::look`, #360).
+pub type LeadIn<'a> = &'a dyn Fn(&Path, &str) -> Lead;
+
+/// The argument that runs `sonara-hook.exe` as a question's lead-in
+/// follow-up (#360), followed by the job (`follow_job`) as JSON.
+pub const FOLLOW_ARG: &str = "--follow-lead-in";
+
+/// How long the follow-up looks for the question in the transcript. The
+/// runtime holds the question for less (`LEAD_IN_WAIT`, 2 s): a lead-in
+/// later than that is dropped there.
+pub const FOLLOW_FOR: Duration = Duration::from_secs(3);
 
 /// How the hook finds the text before the final reply (#355,
 /// `transcript::before_reply`).
@@ -289,22 +303,57 @@ pub type BeforeReply<'a> = &'a dyn Fn(&Path) -> Option<String>;
 /// (the prose rules apply: held and released by the question, skipped in a
 /// flushed reply). A subagent's question (`agent_id`) has its tool use in
 /// another transcript: no lead-in.
-fn question_lead_in(channel: &str, payload: &Value, lead_in: LeadIn) -> Option<Value> {
+fn question_lead_in(payload: &Value, lead_in: LeadIn) -> Lead {
     if !text(payload, "agent_id").is_empty() {
-        return None;
+        return Lead::None;
     }
     let path = text(payload, "transcript_path");
     let id = text(payload, "tool_use_id");
     if path.is_empty() || id.is_empty() {
-        return None;
+        return Lead::None;
     }
-    let t = lead_in(Path::new(path), id)?;
+    lead_in(Path::new(path), id)
+}
+
+/// The `stream` that carries a question's lead-in (`lead_in`); an empty
+/// `delta` says there is none (#360).
+fn lead_in_stream(channel: &str, delta: &str) -> Map<String, Value> {
     let mut m = msg("stream", channel);
-    m.insert("delta".into(), json!(t));
+    m.insert("delta".into(), json!(delta));
     m.insert("index".into(), json!(0));
     m.insert("final".into(), json!(true));
     m.insert("lead_in".into(), json!(true));
-    Some(Value::Object(m))
+    m
+}
+
+/// The follow-up job of a question whose lead-in comes later (#360): the
+/// transcript, the tool use and the waiting `ask`'s channel, label and
+/// `t`. `None` when no `ask` in `msgs` waits.
+pub fn follow_job(payload: &Value, msgs: &[Value]) -> Option<Value> {
+    let ask = msgs
+        .iter()
+        .find(|m| m["type"] == "ask" && m["lead_in_pending"] == true)?;
+    Some(json!({
+        "transcript_path": text(payload, "transcript_path"),
+        "tool_use_id": text(payload, "tool_use_id"),
+        "channel": ask["channel"],
+        "label": ask.get("label").cloned().unwrap_or(Value::Null),
+        "t": ask.get("t").cloned().unwrap_or(Value::Null),
+    }))
+}
+
+/// The follow-up's message for `job`: the lead-in found, or an empty one
+/// that lets the waiting question go at once (#360).
+pub fn follow_message(job: &Value, lead: Option<&str>) -> Value {
+    let channel = job["channel"].as_str().unwrap_or("");
+    let mut m = lead_in_stream(channel, lead.unwrap_or(""));
+    m.insert("lead_in_id".into(), job["tool_use_id"].clone());
+    for key in ["label", "t"] {
+        if let Some(v) = job.get(key).filter(|v| !v.is_null()) {
+            m.insert(key.into(), v.clone());
+        }
+    }
+    Value::Object(m)
 }
 
 /// Map one hook event to protocol messages (no `t` yet). Pure: the
@@ -312,7 +361,7 @@ fn question_lead_in(channel: &str, payload: &Value, lead_in: LeadIn) -> Option<V
 /// The label is looked up only for an event that sends something: the walk
 /// to `.git` touches the file system, and most tool events send nothing.
 pub fn map_event(event: &str, payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Vec<Value> {
-    map_event_with(event, payload, env, &|_, _| None)
+    map_event_with(event, payload, env, &|_, _| Lead::None)
 }
 
 /// `map_event`, with `lead_in` finding the text or thinking to read
@@ -381,11 +430,19 @@ fn map_unlabelled(
                     // this, and the tab's terminal finds the set by its tab
                     // (`question_shown`, #323).
                     let reopen = host_tab(env).map(|_| open(channel, label().as_deref(), env));
-                    let mut out: Vec<Value> = reopen
-                        .into_iter()
-                        .chain(question_lead_in(channel, payload, lead_in))
-                        .collect();
-                    out.extend(questions(channel, input));
+                    let mut out: Vec<Value> = reopen.into_iter().collect();
+                    let lead = question_lead_in(payload, lead_in);
+                    if let Lead::Text(t) = &lead {
+                        out.push(Value::Object(lead_in_stream(channel, t)));
+                    }
+                    let mut asks = questions(channel, input);
+                    if let (Lead::Later, Some(Value::Object(first))) = (&lead, asks.first_mut()) {
+                        // Not on disk yet: the follow-up sends it (#360).
+                        first.insert("lead_in_pending".into(), json!(true));
+                        let id = text(payload, "tool_use_id");
+                        first.insert("lead_in_id".into(), json!(id));
+                    }
+                    out.extend(asks);
                     out
                 }
                 "ExitPlanMode" => {
@@ -626,7 +683,7 @@ mod tests {
             asked
                 .borrow_mut()
                 .push((p.display().to_string(), id.to_string()));
-            Some("The answer before the question.".to_string())
+            Lead::Text("The answer before the question.".to_string())
         };
         let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &lead);
         assert_eq!(
@@ -641,8 +698,16 @@ mod tests {
         );
         assert_eq!(out[1]["type"], "ask");
         // No lead-in (nothing found): the asks alone.
-        let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &|_, _| None);
+        let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &|_, _| Lead::None);
         assert!(out.iter().all(|m| m["type"] == "ask"));
+        // Not on disk yet: the first ask waits for the follow-up.
+        let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &|_, _| {
+            Lead::Later
+        });
+        assert!(out.iter().all(|m| m["type"] == "ask"));
+        assert_eq!(out[0]["lead_in_pending"], true);
+        assert_eq!(out[0]["lead_in_id"], "toolu_1");
+        assert!(out[1].get("lead_in_pending").is_none());
         // A subagent's question is not looked up.
         let mut sub = ask_payload(1);
         sub["agent_id"] = json!("agent-1");
@@ -659,18 +724,18 @@ mod tests {
         let p = json!({"session_id": "s", "transcript_path": "t.jsonl",
                        "last_assistant_message": " Done. "});
         let before = |_: &Path| Some("The report.".to_string());
-        let out = map_event_full("Stop", &p, &|_| None, &|_, _| None, &before);
+        let out = map_event_full("Stop", &p, &|_| None, &|_, _| Lead::None, &before);
         assert_eq!(out[0]["reply"], "Done.");
         assert_eq!(out[0]["before_reply"], "The report.");
         // No reply: no lookup; a subagent's Stop: no text before it.
         let none = json!({"session_id": "s", "transcript_path": "t.jsonl"});
-        let out = map_event_full("Stop", &none, &|_| None, &|_, _| None, &|_| {
+        let out = map_event_full("Stop", &none, &|_| None, &|_, _| Lead::None, &|_| {
             panic!("looked up")
         });
         assert!(out[0].get("reply").is_none());
         let sub = json!({"session_id": "s", "transcript_path": "t.jsonl", "agent_id": "a",
                          "last_assistant_message": "Done."});
-        let out = map_event_full("Stop", &sub, &|_| None, &|_, _| None, &|_| {
+        let out = map_event_full("Stop", &sub, &|_| None, &|_, _| Lead::None, &|_| {
             panic!("looked up")
         });
         assert!(out[0].get("before_reply").is_none());
@@ -793,5 +858,30 @@ mod tests {
             !line.contains("Secret") && !line.contains("payload"),
             "{line}"
         );
+    }
+
+    #[test]
+    fn a_question_waiting_for_its_lead_in_gets_a_follow_up_job_and_message() {
+        let mut msgs = map_event_with("PreToolUse", &ask_payload(1), &|_| None, &|_, _| {
+            Lead::Later
+        });
+        stamp(&mut msgs, 12.5);
+        let job = follow_job(&ask_payload(1), &msgs).expect("a job");
+        assert_eq!(
+            job,
+            json!({"transcript_path": r"C:\t\s.jsonl", "tool_use_id": "toolu_1",
+                   "channel": "s", "label": null, "t": 12.5})
+        );
+        assert_eq!(
+            follow_message(&job, Some("Ten files.")),
+            json!({"type": "stream", "channel": "s", "index": 0, "final": true,
+                   "lead_in": true, "delta": "Ten files.", "t": 12.5,
+                   "lead_in_id": "toolu_1"})
+        );
+        // Nothing found: an empty lead-in lets the question go.
+        assert_eq!(follow_message(&job, None)["delta"], "");
+        // No waiting ask: no job.
+        let msgs = map_event_with("PreToolUse", &ask_payload(1), &|_| None, &|_, _| Lead::None);
+        assert!(follow_job(&ask_payload(1), &msgs).is_none());
     }
 }

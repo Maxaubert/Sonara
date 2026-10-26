@@ -89,9 +89,13 @@ export interface StreamMessage {
   t?: number;
   /**
    * The text before a question, sent with it (protocol 1.13, #323): the
-   * same text again later in the turn is not read twice.
+   * same text again later in the turn is not read twice. It may also come
+   * after an `ask` marked `lead_in_pending` (protocol 1.16, runtime 0.37.0),
+   * with its `lead_in_id`; an empty `delta` then says there is none.
    */
   lead_in?: boolean;
+  /** The `lead_in_id` of the question this late lead-in belongs to. */
+  lead_in_id?: string;
   [extra: string]: unknown;
 }
 
@@ -123,7 +127,9 @@ export class AgentApi {
    * and `set_size` in `extra`. By default (agent key `question_step` `"off"`,
    * protocol 1.11, runtime 0.32.0) every question of the set is read in
    * order, "Question k of N."; with `set question_step "on"` only question 1
-   * is read and the others wait for `nextQuestion`.
+   * is read and the others wait for `nextQuestion`. `extra.lead_in_pending`
+   * (protocol 1.16, runtime 0.37.0) with `extra.lead_in_id`: the question
+   * waits up to 2 s for a `stream` with `lead_in` and that id sent after it.
    */
   ask(channel: string, kind: AskKind, text: string, options?: unknown[], extra: Extra = {}): Promise<Reply> {
     return this.send("ask", defined({ ...extra, channel, kind, text, options }));

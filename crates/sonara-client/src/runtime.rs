@@ -184,6 +184,13 @@ fn keep_std_handles_to_self() {}
 /// handles, out of Claude Code's job when the job allows it (so it
 /// outlives the caller).
 pub fn start_runtime(exe: &Path, args: &[String]) -> std::io::Result<Child> {
+    spawn_detached(exe, args)
+}
+
+/// Start `exe` with `args` on its own: no window, no inherited handles, out
+/// of the caller's job when Windows allows it, so it outlives the caller
+/// and the caller's host never waits for it.
+pub fn spawn_detached(exe: &Path, args: &[String]) -> std::io::Result<Child> {
     keep_std_handles_to_self();
     let spawn = |flags: u32| {
         let mut cmd = Command::new(exe);

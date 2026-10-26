@@ -78,7 +78,9 @@ class Agent:
 
         ``lead_in=True`` in ``extra`` (protocol 1.13, #323): the text before a
         question, sent with it; the same text again later in the turn is not
-        read twice.
+        read twice. It may also come after an ``ask`` marked
+        ``lead_in_pending`` (protocol 1.16, runtime 0.37.0), with its
+        ``lead_in_id``; an empty ``delta`` then says there is none.
         """
         return self._send("stream", _defined({**extra, "channel": channel, "turn": turn, "delta": delta,
                                               "index": index, "final": final, "t": t}))
@@ -101,6 +103,9 @@ class Agent:
         ``"off"``, protocol 1.11, runtime 0.32.0) every question of the set is
         read in order, "Question k of N."; with ``set question_step "on"``
         only question 1 is read and the others wait for ``next_question``.
+        ``lead_in_pending=True`` with ``lead_in_id`` (protocol 1.16, runtime
+        0.37.0): the question waits up to 2 s for a ``stream`` with ``lead_in``
+        and that id sent after it.
         """
         return self._send("ask", _defined({**extra, "channel": channel, "kind": kind, "text": text,
                                            "options": list(options) if options is not None else None}))

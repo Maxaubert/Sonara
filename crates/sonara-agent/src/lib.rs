@@ -129,6 +129,7 @@ pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
 pub use rules::{
     Action, Ask, Job, Nav, Note, Rules, Shown, ShownMove, Stale, Step, Timer, DELTA_GAP,
+    LEAD_IN_WAIT,
 };
 pub use settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, Style, SummaryCommand, SummarySettings,
@@ -519,6 +520,22 @@ impl Agent {
     ) -> Result<bool> {
         self.apply("stream", Some(channel), |r| {
             r.lead_in(channel, turn, delta, t)
+        })
+    }
+
+    /// A question's lead-in that comes after it (#360, `stream` with
+    /// `lead_in` and `lead_in_id`): read before the question waiting with
+    /// that id, else dropped. Returns false when stale (dropped).
+    pub fn late_lead_in(
+        &self,
+        channel: &str,
+        turn: Option<&str>,
+        delta: &str,
+        id: &str,
+        t: Option<f64>,
+    ) -> Result<bool> {
+        self.apply("stream", Some(channel), |r| {
+            r.late_lead_in(channel, turn, delta, id, t)
         })
     }
 

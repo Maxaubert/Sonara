@@ -122,7 +122,11 @@ pub fn stream(a: &Agent, m: &Map<String, Value>) -> Handled {
     let turn = opt_str(m, "turn")?;
     // A question's lead-in (protocol 1.13, #323): one final delta.
     let applied = if opt_flag(m, "lead_in")? {
-        a.lead_in(ch, turn, delta, opt_t(m)?)
+        // One that comes after its question (protocol 1.16, #360).
+        match opt_str(m, "lead_in_id")? {
+            Some(id) => a.late_lead_in(ch, turn, delta, id, opt_t(m)?),
+            None => a.lead_in(ch, turn, delta, opt_t(m)?),
+        }
     } else {
         a.stream(ch, turn, delta, index, is_final, opt_t(m)?)
     }
@@ -195,6 +199,9 @@ pub fn ask(a: &Agent, m: &Map<String, Value>) -> Handled {
     ask.hint = owned("hint")?;
     ask.hint_once = owned("hint_once")?;
     ask.set = set(m)?;
+    // Its lead-in comes later (protocol 1.16, #360).
+    ask.lead_in_pending = opt_flag(m, "lead_in_pending")?;
+    ask.lead_in_id = owned("lead_in_id")?;
     a.ask(ch, &ask).map_err(failure)?;
     ok(Map::new())
 }

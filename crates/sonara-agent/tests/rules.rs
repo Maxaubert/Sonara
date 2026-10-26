@@ -2474,3 +2474,167 @@ fn a_long_token_wrapped_mid_word_on_screen_matches_its_question() {
         Some(ShownMove::Land(n)) if n.index == 1
     ));
 }
+
+// -- a question's lead-in that comes after it (#360) -----------------------
+
+fn pending_question(text: &str, id: &str) -> Ask {
+    let mut a = question(text, &["Yes", "No"]);
+    a.lead_in_pending = true;
+    a.lead_in_id = Some(id.to_string());
+    a
+}
+
+fn lead_in_wait_of(actions: &[Action]) -> (Duration, Timer) {
+    timers(actions)
+        .into_iter()
+        .find(|(_, t)| matches!(t, Timer::LeadIn { .. }))
+        .expect("a lead-in timer")
+}
+
+fn late(r: &mut Rules, delta: &str, id: &str) -> Vec<String> {
+    spoken(&r.late_lead_in("fg", None, delta, id, None).unwrap())
+}
+
+#[test]
+fn a_question_whose_lead_in_comes_later_waits_for_it_and_reads_it_first() {
+    // The Wallet session (2026-10-26): Claude Code writes the question's
+    // thinking to the transcript only after PreToolUse, so the hook's
+    // follow-up sends it a second after the question.
+    let mut r = rules();
+    let a = r.ask("fg", &pending_question("Upload these 10 files?", "q1"));
+    assert_eq!(earcons(&a), [Earcon::Choice], "the chime is instant");
+    assert!(spoken(&a).is_empty(), "the question waits for its lead-in");
+    let (after, _) = lead_in_wait_of(&a);
+    assert_eq!(after, Duration::from_secs(2));
+    assert_eq!(
+        late(&mut r, "It's ten files, not eleven.", "q1"),
+        [
+            "It's ten files, not eleven.",
+            "!Upload these 10 files? Option 1: Yes. Option 2: No."
+        ]
+    );
+}
+
+#[test]
+fn an_empty_late_lead_in_releases_the_question_at_once() {
+    let mut r = rules();
+    assert!(spoken(&r.ask("fg", &pending_question("Go?", "q1"))).is_empty());
+    assert_eq!(
+        late(&mut r, "  ", "q1"),
+        ["!Go? Option 1: Yes. Option 2: No."]
+    );
+}
+
+#[test]
+fn a_late_lead_in_that_never_comes_lets_the_question_speak_after_the_wait() {
+    let mut r = rules();
+    let a = r.ask("fg", &pending_question("Go?", "q1"));
+    let (_, timer) = lead_in_wait_of(&a);
+    let fired = r.fire(&timer, Some("fg"));
+    assert_eq!(spoken(&fired), ["!Go? Option 1: Yes. Option 2: No."]);
+    // Too late: the question was read, its context after it would confuse.
+    assert!(late(&mut r, "Context.", "q1").is_empty());
+    // A stale timer does nothing.
+    assert!(spoken(&r.fire(&timer, Some("fg"))).is_empty());
+}
+
+#[test]
+fn the_questions_of_a_set_wait_with_the_first() {
+    let mut r = rules();
+    let mut first = pending_question("Color?", "q1");
+    first.set = Some((0, 2));
+    let mut second = question("Size?", &["S", "L"]);
+    second.set = Some((1, 2));
+    assert!(spoken(&r.ask("fg", &first)).is_empty());
+    assert!(spoken(&r.ask("fg", &second)).is_empty());
+    let said = late(&mut r, "Two things.", "q1");
+    assert_eq!(said[0], "Two things.");
+    assert_eq!(said.len(), 3, "{said:?}");
+}
+
+#[test]
+fn a_late_lead_in_after_its_question_was_answered_is_dropped() {
+    let mut r = rules();
+    r.ask("fg", &pending_question("Go?", "q1"));
+    r.answered("fg");
+    assert!(late(&mut r, "Context.", "q1").is_empty());
+    // Also after the wait ran out and the answer came.
+    let a = r.ask("fg", &pending_question("Again?", "q2"));
+    r.fire(&lead_in_wait_of(&a).1, Some("fg"));
+    r.answered("fg");
+    r.tool("fg", "Bash", "ls");
+    assert!(late(&mut r, "Context two.", "q2").is_empty());
+}
+
+#[test]
+fn a_late_lead_in_of_another_question_does_not_release_the_waiting_one() {
+    let mut r = rules();
+    let a = r.ask("fg", &pending_question("First?", "q1"));
+    r.fire(&lead_in_wait_of(&a).1, Some("fg"));
+    r.answered("fg");
+    assert!(spoken(&r.ask("fg", &pending_question("Second?", "q2"))).is_empty());
+    // The first one's follow-up gives up: an empty lead-in for q1.
+    assert!(late(&mut r, "", "q1").is_empty(), "the second still waits");
+    assert_eq!(
+        late(&mut r, "Second context.", "q2"),
+        ["Second context.", "!Second? Option 1: Yes. Option 2: No."]
+    );
+}
+
+#[test]
+fn after_a_question_read_without_its_lead_in_the_next_question_s_lead_in_is_read() {
+    let mut r = rules();
+    let a = r.ask("fg", &pending_question("First?", "q1"));
+    r.fire(&lead_in_wait_of(&a).1, Some("fg"));
+    r.answered("fg");
+    // The next question's lead-in comes with it, before its ask.
+    let b = r.lead_in("fg", None, "Second context.", None).unwrap();
+    let c = r.ask("fg", &question("Second?", &["A"]));
+    let mut said = spoken(&b);
+    said.extend(spoken(&c));
+    assert_eq!(said, ["Second context.", "!Second? Option 1: A."]);
+}
+
+#[test]
+fn text_that_came_while_the_question_waited_is_not_read_twice() {
+    let mut r = mode_rules(ReadMode::Immediate);
+    r.ask("fg", &pending_question("Go?", "q1"));
+    assert_eq!(
+        spoken(&prose(&mut r, "fg", "Ten files.", 0, true)),
+        ["Ten files."]
+    );
+    assert_eq!(
+        late(&mut r, "Ten files.", "q1"),
+        ["!Go? Option 1: Yes. Option 2: No."]
+    );
+}
+
+#[test]
+fn with_summaries_on_the_settle_waits_for_the_late_lead_in() {
+    let mut r = summary_rules();
+    let a = r.ask("fg", &pending_question("Deploy now?", "q1"));
+    assert!(spoken(&a).is_empty());
+    // The settle window ends before the lead-in: nothing goes yet.
+    let fired = r.fire(&settle_of(&a), Some("fg"));
+    assert!(spoken(&fired).is_empty() && jobs(&fired).is_empty());
+    // The lead-in comes: the settle runs again and summarizes it first.
+    let b = r
+        .late_lead_in(
+            "fg",
+            None,
+            "I checked the repo and it is clean.",
+            "q1",
+            None,
+        )
+        .unwrap();
+    let fired = r.fire(&settle_of(&b), Some("fg"));
+    let job = jobs(&fired).remove(0);
+    assert!(job.leadin);
+    assert_eq!(
+        spoken(&r.digest_done(&job, Some("The repo is clean.".into()))),
+        [
+            "The repo is clean.",
+            "!Deploy now? Option 1: Yes. Option 2: No."
+        ]
+    );
+}
