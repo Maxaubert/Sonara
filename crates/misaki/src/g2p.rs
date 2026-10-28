@@ -282,6 +282,7 @@ impl G2P {
             tk.tag = tag.tag.clone();
         }
         settle_content(&mut tokens);
+        settle_live(&mut tokens);
 
         // Process in reverse to build context from future tokens
         for i in (0..tokens.len()).rev() {
@@ -598,6 +599,65 @@ fn settle_content(tokens: &mut [MToken]) {
         let adjective =
             i > 0 && CONTENT_ADJECTIVE_CUES.contains(&tokens[i - 1].text.to_lowercase().as_str());
         tokens[i].tag = if adjective { "JJ" } else { "NN" }.to_string();
+    }
+}
+
+/// Words right before "live" that make it the adjective ("the live
+/// stream", "is live", "go live").
+const LIVE_ADJECTIVE_CUES: &[&str] = &[
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "it's", "go", "goes",
+    "going", "went", "gone", "very", "more", "now", "still", "fully", "already",
+];
+
+/// Words earlier in the clause that make "live" the verb ("Where should the
+/// plugin live?", "has to live", "we live").
+const LIVE_VERB_CUES: &[&str] = &[
+    "will", "would", "should", "shall", "can", "could", "may", "might", "must", "do", "does",
+    "did", "to", "let", "i", "we", "you", "they", "who",
+];
+
+/// The tagger calls "live" an adjective in "Where should the Bitwarden
+/// plugin live?" and Kokoro said it like a live concert (owner's report
+/// 2026-10-28). Right after an article, a form of "be" or "go" it is the
+/// adjective; otherwise a modal, "to" or a subject earlier in the clause
+/// makes it the verb. "lives" after a noun or "it" is the verb ("the
+/// config lives in").
+fn settle_live(tokens: &mut [MToken]) {
+    for i in 0..tokens.len() {
+        let word = tokens[i].text.to_lowercase();
+        if word != "live" && word != "lives" {
+            continue;
+        }
+        let prev = (i > 0).then(|| tokens[i - 1].text.to_lowercase());
+        if prev
+            .as_deref()
+            .is_some_and(|p| LIVE_ADJECTIVE_CUES.contains(&p))
+        {
+            tokens[i].tag = "JJ".to_string();
+            continue;
+        }
+        if word == "lives" {
+            // The verb after a noun or a pronoun subject ("the config
+            // lives in"); "our lives" and "save lives" keep the noun.
+            let subject = i > 0
+                && (tokens[i - 1].tag.starts_with("NN")
+                    || matches!(
+                        prev.as_deref(),
+                        Some("it" | "he" | "she" | "that" | "which" | "who" | "what")
+                    ));
+            if subject {
+                tokens[i].tag = "VBZ".to_string();
+            }
+            continue;
+        }
+        let verb = tokens[..i]
+            .iter()
+            .rev()
+            .take_while(|t| !t.text.chars().all(|c| c.is_ascii_punctuation()))
+            .any(|t| LIVE_VERB_CUES.contains(&t.text.to_lowercase().as_str()));
+        if verb {
+            tokens[i].tag = "VB".to_string();
+        }
     }
 }
 

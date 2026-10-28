@@ -83,3 +83,41 @@ fn content_is_the_noun_unless_a_linking_verb_leads_to_it() {
         );
     }
 }
+
+#[test]
+fn live_after_a_modal_or_subject_is_the_verb() {
+    // Owner's report 2026-10-28: "Where should the Bitwarden plugin live?"
+    // was said like a live concert (the adjective).
+    let g2p = G2P::new(Language::EnglishUS);
+    for verb in [
+        "Where should the Bitwarden plugin live?",
+        "Where should it live?",
+        "Where does the config live?",
+        "Which folder should the tests live in?",
+        "The file will live in docs.",
+        "It has to live somewhere.",
+        "Let it live there.",
+        "Where do they live now?",
+        "We live here.",
+        "Where the plugin lives is up to you.",
+        "The config lives in the home folder.",
+    ] {
+        let ps = phonemes(&g2p, verb);
+        assert!(ps.contains("lˈɪv"), "{verb}: {ps}");
+    }
+    for adjective in [
+        "The show is live.",
+        "Should we go live today?",
+        "It will be live soon.",
+        "Watch the live stream.",
+        "A live test runs on this PC.",
+        "Run the live tests.",
+        "The live check passed.",
+        "Is the site live yet?",
+        "Seat belts save lives.",
+        "Our lives changed.",
+    ] {
+        let ps = phonemes(&g2p, adjective);
+        assert!(ps.contains("lˈIv"), "{adjective}: {ps}");
+    }
+}
