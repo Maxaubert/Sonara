@@ -64,9 +64,13 @@ signed="sonarad sonara-hook sonara libonnxruntime.dylib"
 # Each must be signed with an Apple-issued Developer ID Application
 # certificate (Apple's Developer ID requirement), not merely carry an
 # intact signature: the linker signs every arm64 binary ad-hoc.
-# SONARA_CODESIGN_REQUIREMENT replaces it for tests, "-" checks integrity only.
+# SONARA_CODESIGN_REQUIREMENT replaces it for tests ("-" checks integrity
+# only), and only together with SONARA_RELEASE_BASE_URL (a test mirror):
+# a real install from GitHub always needs the Developer ID.
 requirement='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
-[ -n "$SONARA_CODESIGN_REQUIREMENT" ] && requirement="$SONARA_CODESIGN_REQUIREMENT"
+if [ -n "$SONARA_RELEASE_BASE_URL" ] && [ -n "$SONARA_CODESIGN_REQUIREMENT" ]; then
+    requirement="$SONARA_CODESIGN_REQUIREMENT"
+fi
 staging=""
 err=""
 
