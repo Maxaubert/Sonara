@@ -343,6 +343,26 @@ def test_an_archive_whose_signature_does_not_verify_installs_nothing(box, releas
 
 
 @macos
+def test_an_archive_without_a_developer_id_signature_installs_nothing(box, releases, exes):
+    # Intact ad-hoc signatures (the linker's) are not enough by default.
+    data = ph.fake_zip(exes)
+    r = releases({ph.ZIP_NAME: data, "SHA256SUMS": ph.sums_for(data)})
+    box.env["SONARA_RELEASE_BASE_URL"] = r.url
+    box.env.pop("SONARA_CODESIGN_REQUIREMENT", None)
+    box.env.update(NO_START)
+    p = run_bootstrap(box)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert not box.dest.exists()
+    assert "is not signed with a Developer ID" in box.log()
+
+
+@macos
+def test_redirects_are_https_only_too(box):
+    text = (ph.BIN / "sonara-bootstrap.sh").read_text(encoding="utf-8")
+    assert '--proto "$protos" --proto-redir "$protos"' in text
+
+
+@macos
 def test_a_release_without_a_macos_archive_says_so(box, releases, exes):
     # A release of a version that has only the Windows zip (404 for ours).
     data = ph.fake_zip(exes)

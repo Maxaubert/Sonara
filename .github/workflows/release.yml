@@ -259,7 +259,14 @@ jobs:
             [ -x "$p" ] || { echo "::error::$f is not executable in the archive"; exit 1; }
             codesign --verify --strict --verbose=2 "$p"
             codesign -dv "$p" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID" || { echo "::error::$f is not signed by the team"; exit 1; }
+            # The requirement the plugin's bootstrap checks (Developer ID).
+            codesign --verify --strict -R='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$p" || { echo "::error::$f fails the bootstrap's Developer ID requirement"; exit 1; }
+            codesign -dv "$p" 2>&1 | grep -q "flags=.*runtime" || { echo "::error::$f lacks the hardened runtime"; exit 1; }
           done
+          # sonarad: Apple Events allowed (media pause), library validation on.
+          ent=$(codesign -d --entitlements - --xml "$RUNNER_TEMP/check/sonara-runtime-macos-arm64-$v/sonarad" 2>/dev/null)
+          echo "$ent" | grep -q "com.apple.security.automation.apple-events" || { echo "::error::sonarad lacks the apple-events entitlement"; exit 1; }
+          if echo "$ent" | grep -q "disable-library-validation"; then echo "::error::sonarad was signed with the ad-hoc entitlements"; exit 1; fi
       - name: Remove the signing keychain
         if: always()
         run: |

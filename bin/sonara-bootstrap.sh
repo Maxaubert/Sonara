@@ -61,6 +61,12 @@ log_path="$home/logs/bootstrap.log"
 name="sonara-runtime-macos-arm64-$ver.tar.gz"
 # The executables and libraries of the archive, each checked by codesign.
 signed="sonarad sonara-hook sonara libonnxruntime.dylib"
+# Each must be signed with an Apple-issued Developer ID Application
+# certificate (Apple's Developer ID requirement), not merely carry an
+# intact signature: the linker signs every arm64 binary ad-hoc.
+# SONARA_CODESIGN_REQUIREMENT replaces it for tests, "-" checks integrity only.
+requirement='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+[ -n "$SONARA_CODESIGN_REQUIREMENT" ] && requirement="$SONARA_CODESIGN_REQUIREMENT"
 staging=""
 err=""
 
@@ -74,7 +80,7 @@ log() {
 # fetch URL FILE: download URL to FILE; sets err and fails on any error.
 fetch() {
     local code
-    code="$(curl -sSL --proto "$protos" --connect-timeout 20 --max-time 600 \
+    code="$(curl -sSL --proto "$protos" --proto-redir "$protos" --connect-timeout 20 --max-time 600 \
         -o "$2" -w '%{http_code}' "$1" 2>/dev/null)"
     local rc=$?
     if [ "$code" = 404 ]; then
@@ -123,8 +129,13 @@ install_runtime() {
     # curl sets no quarantine attribute; a copy made by hand might have it.
     xattr -dr com.apple.quarantine "$dir" 2>/dev/null
     for f in $signed; do
-        if [ -e "$dir/$f" ] && ! codesign --verify --strict "$dir/$f" 2>/dev/null; then
+        [ -e "$dir/$f" ] || continue
+        if ! codesign --verify --strict "$dir/$f" 2>/dev/null; then
             err="the code signature of $f in $name does not verify"
+            return 1
+        fi
+        if [ "$requirement" != - ] && ! codesign --verify --strict -R="$requirement" "$dir/$f" 2>/dev/null; then
+            err="$f in $name is not signed with a Developer ID"
             return 1
         fi
     done
@@ -149,6 +160,7 @@ install_runtime() {
     return 0
 }
 
+# shellcheck disable=SC2329 # called through the EXIT trap
 cleanup() {
     [ -n "$staging" ] && rm -rf "$staging"
     [ -n "$lock" ] && rm -rf "$lock"
@@ -190,7 +202,7 @@ EOF
             [[ "$n" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
             [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
             sonara_ver_lt "$n" "$ver" || continue
-            if rm -rf "$root/$n" 2>/dev/null && [ ! -e "$root/$n" ]; then
+            if rm -rf "${root:?}/$n" 2>/dev/null && [ ! -e "$root/$n" ]; then
                 log "Removed the old runtime $n"
             else
                 log "Could not remove the old runtime $n yet"

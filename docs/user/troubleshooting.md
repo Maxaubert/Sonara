@@ -121,7 +121,7 @@ The Audio page options: **Other apps**: Off, Duck, Pause. **Duck to**: 0 to 100 
 
 ## Logs
 
-All logs are in `%LOCALAPPDATA%\Sonara\logs\` (on macOS `~/Library/Application Support/Sonara/logs/`). On macOS `bootstrap.log` also names a code signature that did not verify, or a release that has no macOS build.
+All logs are in `%LOCALAPPDATA%\Sonara\logs\` (on macOS `~/Library/Application Support/Sonara/logs/`). On macOS `bootstrap.log` also names a code signature that did not verify or was not made with a Developer ID, or a release that has no macOS build.
 
 | File | Written by | Holds |
 |---|---|---|

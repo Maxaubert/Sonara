@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -55,6 +56,9 @@ class Fake:
             [sys.executable, str(HERE / "fake_runtime.py"), json.dumps({"home": str(home), **opts})],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        # Reaped as soon as it exits, as a runtime started by someone else
+        # would be: pid_alive reaps only the runtimes the SDK started.
+        threading.Thread(target=self.proc.wait, daemon=True).start()
         ok = wait_until(lambda: (read_json(home / "runtime.json") or {}).get("pid") == self.proc.pid, 10)
         assert ok, "the fake runtime wrote no runtime.json"
 

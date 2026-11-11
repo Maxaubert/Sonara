@@ -65,14 +65,16 @@ def pid_alive(pid: int) -> bool:
         return False
     if os.name == "nt":
         return _pid_alive_windows(pid)
-    # A child of this process that has ended (a runtime it started and then
-    # took over) stays a zombie until it is reaped, and signal 0 still finds
-    # a zombie: reap it here, so it counts as ended.
-    try:
-        if os.waitpid(pid, os.WNOHANG)[0] == pid:
-            return False
-    except OSError:
-        pass  # Not a child of this process.
+    # A runtime this SDK started and that has ended (it was taken over)
+    # stays a zombie until it is reaped, and signal 0 still finds a zombie:
+    # reap it through its Popen, so it counts as ended. Other children of
+    # the host are left alone: reaping them here would hide their exit code
+    # from the host's own Popen.
+    for proc in _started:
+        if proc.pid == pid:
+            if proc.poll() is not None:
+                return False
+            break
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

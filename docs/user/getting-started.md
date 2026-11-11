@@ -46,7 +46,7 @@ Install the same way, with the same two commands. What differs:
 |---|---|
 | Download | `sonara-runtime-macos-arm64-<version>.tar.gz` from the same release, checked against the same `SHA256SUMS` |
 | Where | `~/Library/Application Support/Sonara/runtime/<version>/` (programs `sonarad`, `sonara-hook`, `sonara`), the model and your settings next to it in `~/Library/Application Support/Sonara/` |
-| Signature | The programs are signed with Sonara's Developer ID and notarized by Apple. The install checks every signature (`codesign --verify --strict`) and installs nothing when one does not verify. The log is `~/Library/Application Support/Sonara/logs/bootstrap.log` |
+| Signature | The programs are signed with Sonara's Developer ID and notarized by Apple. The install checks that every signature verifies and was made with an Apple-issued Developer ID certificate (`codesign --verify --strict -R`), and installs nothing otherwise. It does not yet pin Sonara's own team ID. The log is `~/Library/Application Support/Sonara/logs/bootstrap.log` |
 | Voice while Kokoro downloads | The macOS voices (the `say` voices), not the Windows ones |
 | Hotkeys | **Ctrl+Option**+Up, Down, M, P (Option is the Alt key). VoiceOver uses Ctrl+Option too: if you use VoiceOver, rebind them with Cmd ([hotkeys.md](hotkeys.md#on-macos)) |
 | Permission prompts | No Accessibility or Input Monitoring prompt: the hotkeys are registered with the system. With *Pause* (the default), macOS asks once per app, the first time Sonara pauses it, whether Sonara may control **Music** or **Spotify** (an Automation prompt). Allow it, or Sonara leaves that app playing. You can change it later in System Settings, Privacy & Security, Automation |

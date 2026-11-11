@@ -64,6 +64,45 @@ def test_an_ad_hoc_signature_is_only_for_local_tests():
     assert "--options" not in argv and "--timestamp=none" in argv
 
 
+def test_sonarad_is_signed_with_the_apple_events_entitlement():
+    # Hardened, osascript's Apple Events (media pause) are refused without it.
+    argv = sm.sign_command(Path("/b/sonarad"), "ABC123")
+    ent = Path(argv[argv.index("--entitlements") + 1])
+    assert ent.is_file()
+    assert "com.apple.security.automation.apple-events" in ent.read_text(encoding="utf-8")
+    for other in ("sonara-hook", "sonara", "libonnxruntime.dylib"):
+        assert "--entitlements" not in sm.sign_command(Path("/b") / other, "ABC123")
+
+
+def test_a_hardened_ad_hoc_signature_matches_the_release_options():
+    argv = sm.sign_command(Path("/b/sonarad"), "-", hardened=True)
+    assert argv[argv.index("--options") + 1] == "runtime"
+    assert "--entitlements" in argv and "--timestamp=none" in argv
+    # Only ad-hoc turns library validation off (no team ID to match).
+    adhoc = Path(argv[argv.index("--entitlements") + 1]).read_text(encoding="utf-8")
+    assert "disable-library-validation" in adhoc
+    real = sm.sign_command(Path("/b/sonarad"), "ABC123")
+    assert "disable-library-validation" not in Path(real[real.index("--entitlements") + 1]).read_text(
+        encoding="utf-8")
+
+
+def test_a_rejected_notarization_prints_apples_log_even_when_notarytool_fails():
+    out = '{"id": "abc-1", "status": "Invalid", "message": "Processing complete"}'
+    asked = []
+
+    def log(sid):
+        asked.append(sid)
+        return "the binary is not signed with a valid Developer ID"
+
+    with pytest.raises(SystemExit, match="not signed with a valid Developer ID") as e:
+        sm._verdict(1, out, "", log, secret="hunter2")
+    assert asked == ["abc-1"] and "Invalid" in str(e.value)
+    assert sm._verdict(0, '{"id": "x", "status": "Accepted"}', "", log)["status"] == "Accepted"
+    with pytest.raises(SystemExit) as e:
+        sm._verdict(2, "", "auth failed for hunter2", log, secret="hunter2")
+    assert "hunter2" not in str(e.value) and "auth failed for ***" in str(e.value)
+
+
 def test_the_library_is_signed_before_the_executables(tmp_path):
     for n in ("sonarad", "sonara-hook", "sonara", "libonnxruntime.dylib", "sonarad.d"):
         (tmp_path / n).write_bytes(b"x")
@@ -111,3 +150,22 @@ def test_the_release_is_published_only_with_both_platform_assets():
     assert "sonara-runtime-win-x64-" in run and "sonara-runtime-macos-arm64-" in run
     assert "release_zip.py --merge" in run
     assert "gh release create" in run
+
+
+def test_the_release_checks_the_requirement_the_bootstrap_enforces():
+    import re
+    boot = (REPO / "bin" / "sonara-bootstrap.sh").read_text(encoding="utf-8")
+    req = re.search(r"^requirement='([^']+)'$", boot, re.M).group(1)
+    assert "certificate leaf[field.1.2.840.113635.100.6.1.13]" in req  # Developer ID Application
+    release = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "-R='" + req + "'" in release
+
+
+def test_the_entitlements_parse_and_hold_no_xml_comments():
+    # codesign's parser (AMFIUnserializeXML) refuses a comment: the
+    # reasons live in packaging/macos/README.md.
+    import plistlib
+    for p in (REPO / "packaging" / "macos").glob("*.entitlements"):
+        text = p.read_text(encoding="utf-8")
+        assert "<!--" not in text, p.name
+        assert plistlib.loads(text.encode())["com.apple.security.automation.apple-events"] is True

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -350,3 +351,14 @@ def test_the_package_has_no_runtime_dependencies():
     from pathlib import Path
     text = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
     assert "dependencies = []" in text
+
+
+def test_pid_alive_leaves_the_hosts_own_children_to_their_popen(tmp_path):
+    # A child the host started itself and that has ended: pid_alive must not
+    # reap it, or the host's Popen loses the exit code.
+    if os.name == "nt":
+        pytest.skip("zombies and waitpid are POSIX")
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(7)"])
+    time.sleep(0.5)
+    pid_alive(proc.pid)
+    assert proc.wait(5) == 7

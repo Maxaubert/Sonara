@@ -12,6 +12,7 @@
 # sonara_ver_lt A B: version A (major.minor.patch) is older than B.
 sonara_ver_lt() {
     local IFS=. i x y
+    # shellcheck disable=SC2206 # split on IFS=. into major, minor, patch
     local -a a=($1) b=($2)
     for i in 0 1 2; do
         x="${a[i]:-0}"

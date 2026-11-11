@@ -94,7 +94,9 @@ bootstrap against a local release server, `sonara.exe`, and a release zip instal
 `LOCALAPPDATA`. On macOS it drives `bin/` with the system `/bin/bash` 3.2 and
 `bin/sonara-bootstrap.sh` (curl, `shasum`, `tar`, `codesign`) instead, installing a release
 tar.gz into a temp `HOME` (so under a path with a space); macOS-only cases check that a tampered
-signature, a missing macOS asset (404) and a `file://` mirror behave. A lone stale
+signature, an ad-hoc (not Developer ID) signature, a missing macOS asset (404) and a `file://`
+mirror behave. The plugin harness sets `SONARA_CODESIGN_REQUIREMENT=-` (integrity only), since the
+test builds carry the linker's ad-hoc signature. A lone stale
 `target/release/sonarad.exe` can shadow the debug build: `trash` it first.
 
 ### macOS: the release archive end to end (local, headless)
@@ -106,17 +108,22 @@ is always Developer ID signed and notarized):
 export PATH=/opt/homebrew/opt/rustup/bin:$PATH
 cargo build -p sonarad -p sonara-hook -p sonara-cli --release
 python3 packaging/runtime_dlls.py stage target/release
-python3 packaging/sign_macos.py sign target/release --identity -
+python3 packaging/sign_macos.py sign target/release --identity - --hardened
 python3 packaging/release_zip.py --platform macos-arm64 --out <scratch>/dist
 ```
 
 Then serve `<scratch>/dist` as `/v<version>/` from a local HTTP server and run
 `bin/sonara-hook-launch SessionStart` with `HOME` set to a temp folder, `SONARA_HOME` to another,
-`SONARA_RELEASE_BASE_URL` to the server and `SONARA_RUNTIME_ARGS="--engine fake --system fake
+`SONARA_RELEASE_BASE_URL` to the server, `SONARA_CODESIGN_REQUIREMENT=-` (an ad-hoc signature is
+no Developer ID) and `SONARA_RUNTIME_ARGS="--engine fake --system fake
 --keys fake"`: the hook returns at once, the bootstrap installs and starts the runtime, and
 `bin/sonara doctor` shows the installed `sonarad`, `sonara-hook` and `libonnxruntime.dylib`. Never
 point `HOME` at your real one for this. Checked 2026-11-11: the hook returned in 0.01 s, every
-signature verified, doctor all OK.
+signature verified, doctor all OK; again with `--hardened` (the hardened runtime and sonarad's
+entitlements, as a release has; `packaging/macos/README.md`), same result. A hardened ad-hoc
+sonarad refuses an ad-hoc `libonnxruntime.dylib` ("different Team IDs"), which is why the ad-hoc
+entitlements turn library validation off. Not checked locally: Apple Events (media pause) from a
+hardened sonarad.
 
 With the real Developer ID certificate in the login keychain, `python3 packaging/sign_macos.py
 sign target/release` signs for real, and `notarize target/release` (with the notary secrets in the

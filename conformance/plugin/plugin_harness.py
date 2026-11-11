@@ -206,7 +206,7 @@ class Box:
         env = dict(os.environ)
         for k in ("SONARA_SUMMARIZER", "SONARA_CAPTURE", "SONARA_HOST_TAB", "FLARE_TAB_ID",
                   "SONARA_NO_START", "SONARA_RUNTIME_ARGS", "SONARA_BOOTSTRAP_START",
-                  "SONARA_RELEASE_BASE_URL", "CLAUDE_PLUGIN_ROOT"):
+                  "SONARA_RELEASE_BASE_URL", "SONARA_CODESIGN_REQUIREMENT", "CLAUDE_PLUGIN_ROOT"):
             env.pop(k, None)
         bash = find_bash()
         if bash is not None and WINDOWS:
@@ -217,6 +217,9 @@ class Box:
             self.root = self.lad / "Library" / "Application Support" / "Sonara" / "runtime"
             self.dest = self.root / VERSION
             env["HOME"] = str(self.lad)
+            # The test builds carry the linker's ad-hoc signature, not a
+            # Developer ID: check only that each signature is intact.
+            env["SONARA_CODESIGN_REQUIREMENT"] = "-"
         env.update({
             "LOCALAPPDATA": str(self.lad),
             "SONARA_HOME": str(self.home),

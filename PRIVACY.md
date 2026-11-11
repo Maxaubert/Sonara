@@ -253,7 +253,8 @@ Sonara downloads software, never your data, over HTTPS from GitHub:
   (about 15 MB) and `SHA256SUMS` of the same release. The zip is installed only when its SHA-256
   matches. On macOS it is `sonara-runtime-macos-arm64-<version>.tar.gz`, downloaded with `curl`
   (HTTPS only) and installed only when its SHA-256 matches and every program's code signature
-  verifies (`codesign`, which reads the signature in the file and sends nothing).
+  verifies and comes from a Developer ID (`codesign`, which reads the signature in the file and
+  sends nothing).
 - **The Kokoro voice model**, once, by the runtime: two files (about 350 MB) from
   `https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0`, each checked
   against a SHA-256 value built into Sonara.

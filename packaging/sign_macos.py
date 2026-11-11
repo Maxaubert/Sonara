@@ -6,11 +6,19 @@
     python packaging/sign_macos.py sign target/release [--identity ID] [--keychain PATH]
     python packaging/sign_macos.py notarize target/release
     python packaging/sign_macos.py sign target/release --identity -   # ad-hoc, LOCAL tests only
+    python packaging/sign_macos.py sign target/release --identity - --hardened   # ad-hoc as shipped
 
 ``sign`` signs ``libonnxruntime.dylib`` first, then ``sonarad``,
 ``sonara-hook`` and ``sonara``, each with the hardened runtime and a secure
 timestamp (``codesign --force --options runtime --timestamp``), and checks
-each with ``codesign --verify --strict``. ``notarize`` zips the signed
+each with ``codesign --verify --strict``. ``sonarad`` gets the entitlements
+of ``packaging/macos/sonarad.entitlements`` (Apple Events: it pauses Music
+and Spotify through osascript, which the hardened runtime otherwise
+refuses). ``--hardened`` gives an ad-hoc signature the hardened runtime and
+those entitlements, so a local test runs the binaries close to how they
+ship; it also turns off library validation for sonarad (an ad-hoc signature
+has no team ID, so libonnxruntime.dylib would be refused), which a release
+keeps on: one Developer ID team signs both. ``notarize`` zips the signed
 files (``ditto``), sends them to Apple's notary service with
 ``xcrun notarytool submit --wait`` and fails unless Apple accepts them; the
 log of a rejected submission is printed. Bare Mach-O files take no stapled
@@ -47,6 +55,12 @@ CERT_SECRETS = ("APPLE_CERT_P12_BASE64", "APPLE_CERT_PASSWORD", "APPLE_TEAM_ID")
 API_KEY_SECRETS = ("APPLE_API_KEY_P8_BASE64", "APPLE_API_KEY_ID", "APPLE_API_ISSUER")
 APPLE_ID_SECRETS = ("APPLE_ID", "APPLE_APP_PASSWORD")
 IDENTITY_PREFIX = "Developer ID Application"
+# Entitlements per signed file (the others take none).
+ENTITLEMENTS = {"sonarad": Path(__file__).resolve().parent / "macos" / "sonarad.entitlements"}
+# A hardened ad-hoc signature (local tests): no team ID, so library
+# validation would refuse the ad-hoc libonnxruntime.dylib; these add
+# disable-library-validation. Never in a release.
+ADHOC_ENTITLEMENTS = {"sonarad": Path(__file__).resolve().parent / "macos" / "sonarad-adhoc.entitlements"}
 
 
 def _set(env: Mapping[str, str], name: str) -> bool:
@@ -62,12 +76,21 @@ def missing_secrets(env: Mapping[str, str]) -> List[str]:
     return lacking
 
 
-def sign_command(path: Path, identity: str, keychain: Optional[str] = None) -> List[str]:
-    """``codesign`` for one file: hardened runtime and a secure timestamp
-    for a real identity; ad-hoc (``-``) gets neither (local tests only)."""
+def sign_command(path: Path, identity: str, keychain: Optional[str] = None,
+                 hardened: bool = False) -> List[str]:
+    """``codesign`` for one file: hardened runtime, the file's entitlements
+    and a secure timestamp for a real identity; ad-hoc (``-``, local tests
+    only) gets no timestamp, and the hardened runtime and entitlements only
+    with ``hardened``."""
     argv = ["codesign", "--force", "--sign", identity]
-    if identity != "-":
-        argv += ["--options", "runtime", "--timestamp"]
+    real = identity != "-"
+    if real or hardened:
+        argv += ["--options", "runtime"]
+        ent = (ENTITLEMENTS if real else ADHOC_ENTITLEMENTS).get(path.name)
+        if ent is not None:
+            argv += ["--entitlements", str(ent)]
+    if real:
+        argv += ["--timestamp"]
         if keychain:
             argv += ["--keychain", keychain]
     else:
@@ -152,10 +175,11 @@ def import_cert(env: Mapping[str, str], keychain: Path) -> str:
     return find_identity(str(keychain), env["APPLE_TEAM_ID"].strip())
 
 
-def sign(folder: Path, identity: str, keychain: Optional[str] = None) -> List[Path]:
+def sign(folder: Path, identity: str, keychain: Optional[str] = None,
+         hardened: bool = False) -> List[Path]:
     done = []
     for f in files_to_sign(folder):
-        _run(sign_command(f, identity, keychain))
+        _run(sign_command(f, identity, keychain, hardened))
         _run(verify_command(f))
         done.append(f)
     return done
@@ -176,15 +200,32 @@ def notarize(folder: Path, env: Mapping[str, str]) -> Dict:
             key.write_bytes(base64.b64decode(env["APPLE_API_KEY_P8_BASE64"]))
         auth = notary_auth(env, key)
         secret = env.get("APPLE_APP_PASSWORD") if "--password" in auth else None
-        out = _run(["xcrun", "notarytool", "submit", str(archive), "--wait", "--timeout", "30m",
-                    "--output-format", "json", *auth], secret)
+        # notarytool can exit non-zero on a rejection (Invalid): its JSON
+        # is read whatever the exit code, so the log is fetched either way.
+        r = subprocess.run(["xcrun", "notarytool", "submit", str(archive), "--wait", "--timeout", "30m",
+                            "--output-format", "json", *auth], capture_output=True, text=True)
+        return _verdict(r.returncode, r.stdout, r.stderr, lambda sid: subprocess.run(
+            ["xcrun", "notarytool", "log", sid, *auth], capture_output=True, text=True).stdout, secret)
+
+
+def _verdict(code: int, out: str, err: str, fetch_log, secret: Optional[str] = None) -> Dict:
+    """The result of ``notarytool submit``; exits with Apple's log unless
+    the submission was accepted."""
+    try:
         result = json.loads(out)
-        if result.get("status") != "Accepted":
-            log = subprocess.run(["xcrun", "notarytool", "log", str(result.get("id")), *auth],
-                                 capture_output=True, text=True).stdout
-            raise SystemExit("sign_macos: notarization {0}: {1}\n{2}".format(
-                result.get("status"), result.get("message", ""), log))
+    except ValueError:
+        result = {}
+    if not isinstance(result, dict):
+        result = {}
+    if result.get("status") == "Accepted" and code == 0:
         return result
+    sid = result.get("id")
+    log = fetch_log(str(sid)) if sid else ""
+    text = "sign_macos: notarization {0} (exit {1}): {2}\n{3}{4}\n{5}".format(
+        result.get("status", "failed"), code, result.get("message", ""), out, err, log)
+    if secret:
+        text = text.replace(secret, "***")
+    raise SystemExit(text)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -200,6 +241,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="SHA-1 or name of the identity (default: the one Developer ID Application "
                          "identity; '-' is ad-hoc, for local tests only)")
     sg.add_argument("--keychain", default=os.environ.get("APPLE_SIGNING_KEYCHAIN"))
+    sg.add_argument("--hardened", action="store_true",
+                    help="with --identity -: the hardened runtime and entitlements, as a release has")
     nt = sub.add_parser("notarize", help="notarize the signed runtime files in a folder")
     nt.add_argument("folder", type=Path)
     args = ap.parse_args(argv)
@@ -223,7 +266,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.cmd == "sign":
         identity = args.identity or find_identity(args.keychain)
-        for f in sign(args.folder, identity, args.keychain):
+        for f in sign(args.folder, identity, args.keychain, args.hardened):
             print(f)
         return 0
     result = notarize(args.folder, os.environ)

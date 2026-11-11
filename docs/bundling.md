@@ -34,15 +34,17 @@ On macOS the same folder holds `sonarad` and `libonnxruntime.dylib` (with the tw
 ```sh
 v=<version>
 base=https://github.com/Maxaubert/Sonara/releases/download/v$v
-curl -fsSLO --proto =https "$base/sonara-runtime-macos-arm64-$v.tar.gz"
-curl -fsSLO --proto =https "$base/SHA256SUMS"
+curl -fsSLO --proto =https --proto-redir =https "$base/sonara-runtime-macos-arm64-$v.tar.gz"
+curl -fsSLO --proto =https --proto-redir =https "$base/SHA256SUMS"
 grep " sonara-runtime-macos-arm64-$v.tar.gz\$" SHA256SUMS | shasum -a 256 -c -
 tar -xzf "sonara-runtime-macos-arm64-$v.tar.gz"
 codesign --verify --strict "sonara-runtime-macos-arm64-$v/sonarad"
 codesign --verify --strict "sonara-runtime-macos-arm64-$v/libonnxruntime.dylib"
+# Developer ID, as the plugin requires:
+codesign --verify --strict -R='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "sonara-runtime-macos-arm64-$v/sonarad"
 ```
 
-Inside an `.app`, copy `sonarad` and `libonnxruntime.dylib` into one folder (for example `Contents/MacOS/`; `sonarad` loads the library from its own folder) and sign them again with your own identity when you sign the app (the hardened runtime only loads a library signed by the same team). A file a browser downloaded carries the quarantine attribute; a `curl` download does not.
+Inside an `.app`, copy `sonarad` and `libonnxruntime.dylib` into one folder (for example `Contents/MacOS/`; `sonarad` loads the library from its own folder) and sign them again with your own identity when you sign the app (the hardened runtime only loads a library signed by the same team). Give the signature that runs `sonarad` (your app's, under the hardened runtime) the `com.apple.security.automation.apple-events` entitlement, or pausing Music and Spotify fails silently (`packaging/macos/sonarad.entitlements`). A file a browser downloaded carries the quarantine attribute; a `curl` download does not.
 
 ## How `connect()` finds the runtime
 
