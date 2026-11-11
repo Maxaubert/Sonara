@@ -11,6 +11,7 @@ safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
 |---|---|
 | OneCore voices | `cargo test -p sonara-engine --test onecore_live -- --ignored` |
 | L4 audio, media and hotkeys | `cargo test -p sonara-system --test win_live -- --ignored` |
+| Output follows a new default device (switch or unplug devices while it plays, Windows and macOS) | `cargo test -p sonara-audio --test device_follow_live -- --ignored --nocapture` |
 | Credential Manager round trip | `cargo test -p sonara-engine --test credman_live -- --ignored` |
 | End to end, one sentence | `cargo run -p sonara-reader --example say -- --engine onecore\|fake "Hello."` |
 

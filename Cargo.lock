@@ -1173,6 +1173,8 @@ dependencies = [
 name = "sonara-audio"
 version = "0.37.2"
 dependencies = [
+ "objc2-core-audio",
+ "objc2-core-foundation",
  "rodio",
  "sonara-audio",
  "sonara-core",
