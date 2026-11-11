@@ -6,10 +6,10 @@ Everything you need to use Sonara, one short page per topic. For how Sonara is b
 
 | Page | What it covers |
 |---|---|
-| [Getting started](getting-started.md) | Install, first start, what happens on first use, your first reply |
+| [Getting started](getting-started.md) | Install, first start, what happens on first use, your first reply, and what differs on macOS |
 | [Reading and code](reading-and-code.md) | How replies are read, how dates, paths and tables sound, detail levels, reading code line by line |
 | [Answering prompts](answering-prompts.md) | Questions, permission prompts and plans: the chime, the options, the number keys |
-| [Hotkeys](hotkeys.md) | The default keys, tap versus hold, rebinding, AltGr and other clashes |
+| [Hotkeys](hotkeys.md) | The default keys (Ctrl+Option on macOS), tap versus hold, rebinding, AltGr, VoiceOver and other clashes |
 | [Settings](settings.md) | Every page of the settings page, each setting with its range and default |
 | [Voices and engines](voices-and-engines.md) | Kokoro, Windows voices, cloud voices and your own speech program |
 | [Spoken summaries](summaries.md) | Summary mode: styles, Claude or Codex, cost and privacy |
@@ -34,6 +34,8 @@ Everything you need to use Sonara, one short page per topic. For how Sonara is b
 - **Something else.** [FAQ](faq.md).
 
 ## Quick reference
+
+On macOS the hotkeys use Ctrl+Option where this table says Ctrl+Alt.
 
 | Need | Do |
 |---|---|

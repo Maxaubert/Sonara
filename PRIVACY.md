@@ -167,17 +167,18 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
 
 Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 (`C:\Users\<you>\AppData\Local\Sonara`). None of it is sent anywhere.
-On macOS (in development) the same files live under
-`~/Library/Application Support/Sonara`, created readable only by you; the paths below use `/`
-there instead of `\`.
+On macOS the same files live under `~/Library/Application Support/Sonara`
+(`/Users/<you>/Library/Application Support/Sonara`), created readable only by you; the paths
+below use `/` there instead of `\`, and the programs have no `.exe`.
 
 **The runtime**
 
 | Path | What it holds |
 |---|---|
-| `runtime\<version>\` | Sonara's programs (`sonarad.exe`, `sonara-hook.exe`, `sonara.exe`), Microsoft's ONNX Runtime and the Visual C++ runtime DLLs it needs, and the licence notices, from the release zip. Only the current version is kept |
+| `runtime\<version>\` | Sonara's programs (`sonarad.exe`, `sonara-hook.exe`, `sonara.exe`), Microsoft's ONNX Runtime and the Visual C++ runtime DLLs it needs, and the licence notices, from the release zip. On macOS `sonarad`, `sonara-hook`, `sonara` and `libonnxruntime.dylib` (no Visual C++ files), from the release tar.gz. Only the current version is kept |
 | `runtime\.bootstrap.lock` | Present while the runtime is being installed (`.bootstrap.lock.takeover` for a moment while a hook takes over the lock of an install that was killed) |
-| `runtime\.bootstrap.failed` | The time and reason of the last failed install (a download error or a checksum mismatch), so hooks wait a few minutes before trying again |
+| `runtime\.bootstrap.failed` | The time and reason of the last failed install (a download error, a checksum mismatch, on macOS also a code signature that does not verify), so hooks wait a few minutes before trying again |
+| `runtime\.staging-*` | The download and the unpacked archive while an install runs (removed when it ends) |
 | `models\kokoro\v1.0\` | The Kokoro voice model (`kokoro-v1.0.onnx`, `voices-v1.0.bin`; a download in progress is `*.part`) and `verified.json` (size, time and hash of the checked files) |
 
 **Settings**
@@ -250,7 +251,9 @@ Sonara downloads software, never your data, over HTTPS from GitHub:
 - **The runtime**, on first use and after a plugin update:
   `https://github.com/Maxaubert/Sonara/releases/download/v<version>/sonara-runtime-win-x64-<version>.zip`
   (about 15 MB) and `SHA256SUMS` of the same release. The zip is installed only when its SHA-256
-  matches.
+  matches. On macOS it is `sonara-runtime-macos-arm64-<version>.tar.gz`, downloaded with `curl`
+  (HTTPS only) and installed only when its SHA-256 matches and every program's code signature
+  verifies (`codesign`, which reads the signature in the file and sends nothing).
 - **The Kokoro voice model**, once, by the runtime: two files (about 350 MB) from
   `https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0`, each checked
   against a SHA-256 value built into Sonara.

@@ -1,6 +1,6 @@
 # Sonara
 
-Text-to-speech runtime for Windows with a Claude Code plugin, run by the Rust runtime in `crates/`. Hooks: `hooks/hooks.json` -> `bin/sonara-hook-launch` (Git Bash) -> `sonara-hook.exe` -> `sonarad.exe`. Commands: `commands/*.md` -> `bin/sonara` -> `sonara.exe` (`crates/sonara-cli`). Docs index: `docs/README.md`.
+Text-to-speech runtime for Windows and macOS (Apple silicon) with a Claude Code plugin, run by the Rust runtime in `crates/`. Hooks: `hooks/hooks.json` -> `bin/sonara-hook-launch` (Git Bash; macOS `/bin/bash` 3.2, branch on `$OSTYPE`) -> `sonara-hook.exe` -> `sonarad.exe` (no `.exe` on macOS). Commands: `commands/*.md` -> `bin/sonara` -> `sonara.exe` (`crates/sonara-cli`). Docs index: `docs/README.md`.
 
 ## Remotes
 - `origin` = the fork `Maxaubert/Sonara` (PRs go here). `upstream` = `nimkimi/sonari`: never push there.
@@ -8,9 +8,9 @@ Text-to-speech runtime for Windows with a Claude Code plugin, run by the Rust ru
 
 ## Build, test, release
 - Gate script (#256): `python packaging/gate.py` runs the gates the changed paths need, as CI does (`--dry-run` plan, `--quick` changed crates only, `--all` everything); run it before every commit.
-- Rust (needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo nextest run --workspace; cargo test --workspace --doc; cargo deny check licenses bans` (without cargo-nextest: `cargo test --workspace`). One crate: `cargo nextest run -p <crate>`.
+- Rust (needs `~/.cargo/bin` on PATH; this Mac: `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo nextest run --workspace; cargo test --workspace --doc; cargo deny check licenses bans` (without cargo-nextest: `cargo test --workspace`). One crate: `cargo nextest run -p <crate>`.
 - Conformance (protocol v1, black box): `cargo build -p sonarad -p sonara-hook -p sonara-cli; python -m pytest conformance -q` (the newest of `target/release` and `target/debug` unless `SONARAD`/`SONARA_HOOK` are set).
-- CI (`ci.yml`) jobs, the required checks: `check`, `rust`, `conformance`, `clients`, `deny`; keep the names (`packaging/gate.py` `REQUIRED_CHECKS`).
+- CI (`ci.yml`) jobs, the required checks: `check`, `rust`, `conformance`, `clients`, `deny`; keep the names (`packaging/gate.py` `REQUIRED_CHECKS`). `macos` is advisory (`ADVISORY_CHECKS`) until branch protection requires it.
 - Typecheck/lint: `ruff check tests conformance clients/python packaging`; TS: `npm run typecheck` in `clients/ts`.
 - Repo checks (`tests/repo`, Python 3.12, `pip install --group dev`; `pyproject.toml` is dev config only): `python -m pytest tests/repo -q` (plain `python -m pytest -q` also runs `tests/e2e`).
 - E2E (headless): `python -m pytest tests/e2e -q` (`pip install --group e2e`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings/` (the page in parts, joined in `settings_page.rs`), `crates/sonarad/src/settings_page.rs` or `config.rs` change (needs `cargo build -p sonarad`).
@@ -20,16 +20,17 @@ Text-to-speech runtime for Windows with a Claude Code plugin, run by the Rust ru
 - Skill `sonara-gates`: the gate script, every gate command and when the e2e and SDK gates apply.
 - Skill `sonara-live-tests`: the opt-in live checks and their env vars.
 - Build / package: `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release; python packaging/release_zip.py`   Artifact: `sonara-runtime-win-x64-<version>.zip` + `SHA256SUMS`
+- macOS build: the same commands (runtime_dlls stages `libonnxruntime.dylib`), then `python3 packaging/sign_macos.py sign target/release` (`--identity -` = ad-hoc, local tests only) and `python3 packaging/release_zip.py --platform macos-arm64`   Artifact: `sonara-runtime-macos-arm64-<version>.tar.gz`; a release needs both archives and one merged `SHA256SUMS` (`release_zip.py --merge`). Local end to end: `docs/testing.md`. Never touch the real `~/Library/Application Support/Sonara` in tests (temp `HOME`).
 - Known failures to tolerate: none
 - Version: `Cargo.toml` `[workspace.package]`; `python packaging/bump_version.py <version>` sets every version file and lockfile entry (`--check` prints it, as release.yml reads it; `tests/repo/test_manifests.py`)   Release: release.yml once ci.yml passed on a push to main (`workflow_run`, #250); users get the release named in `bin/runtime-version`
 - SDK publishing (#279): release.yml, trusted publishing (OIDC), on while repo vars `PUBLISH_PYPI` / `PUBLISH_NPM` are `true`; checks: `python packaging/build_packages.py --publish-dry-run`; setup in `docs/bundling.md`.
 - Install locally after merge: `/plugin update sonara@sonara` once the release exists, restart Claude Code   Confirm version: `/sonara:doctor` (its `version` row)
-- Deploy: plugin marketplace   Signing: unsigned
+- Deploy: plugin marketplace   Signing: Windows unsigned; macOS Developer ID + notarization (`packaging/sign_macos.py`, secrets `APPLE_*`, setup in `docs/bundling.md`; release.yml fails without them)
 
 ## Runtime deploy drift (the biggest gotcha)
-- The plugin runs `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`, NOT the repo or `target/`. Before diagnosing behaviour compare `sonara.exe version` there with the branch. Redeploy a branch build only with `sonara.exe stop` first and `start` after the copy, never during someone's session.
+- The plugin runs `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\` (macOS `~/Library/Application Support/Sonara/runtime/<version>/`), NOT the repo or `target/`. Before diagnosing behaviour compare `sonara.exe version` there with the branch. Redeploy a branch build only with `sonara.exe stop` first and `start` after the copy, never during someone's session.
 - Skill `sonara-redeploy`: the safe stop, copy and start of a branch build, in the same or a new version folder, and the rollback.
-- Home (`SONARA_HOME` overrides): `%LOCALAPPDATA%\Sonara`: `config.json` (only user-set keys), `runtime.json`, `logs\` (`sonarad.log`, `hook.log`, `bootstrap.log`).
+- Home (`SONARA_HOME` overrides): `%LOCALAPPDATA%\Sonara` (macOS `~/Library/Application Support/Sonara`; Rust, both SDKs and `bin/` must agree): `config.json` (only user-set keys), `runtime.json`, `logs\` (`sonarad.log`, `hook.log`, `bootstrap.log`).
 
 ## Architecture (map: `docs/architecture.md`)
 - Layers: L1 `sonara-core`, `-engine`, `-audio`, `-reader`, `misaki`, `sonara-log`; L2 `sonara-channels`; L3 `sonara-agent`; L4 `sonara-system`; L5 `sonara-hook`, `sonara-cli` on the leaf protocol client `sonara-client`; `sonarad` hosts them. No crate depends upward (one table of allowed edges: `crates/sonara-core/tests/layering.rs`).

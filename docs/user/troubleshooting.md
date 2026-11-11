@@ -22,10 +22,10 @@ Rows appear in this order. Rows from `engine` to `mute level` appear only while 
 | Row | Tag | What it says | What to do |
 |---|---|---|---|
 | `version` | INFO | The version of `sonara.exe` that ran | Nothing. Compare it with the release you expect after an update |
-| `home` | INFO | Sonara's folder, normally `%LOCALAPPDATA%\Sonara` | Nothing. Logs and settings live here |
+| `home` | INFO | Sonara's folder, normally `%LOCALAPPDATA%\Sonara` (on macOS `~/Library/Application Support/Sonara`) | Nothing. Logs and settings live here |
 | `sonarad.exe` | OK / FAIL | The speaking program is present, or "missing from ..." | FAIL: run `/sonara:start` to reinstall the runtime |
 | `sonara-hook.exe` | OK / FAIL | The program Claude Code's hooks call is present, or missing | FAIL: run `/sonara:start` |
-| `onnxruntime.dll` | OK / WARN | The library Kokoro needs is present. WARN says "Kokoro cannot run; Windows voices only" | Run `/sonara:start`. If it stays missing, restart Claude Code so the runtime reinstalls |
+| `onnxruntime.dll` (on macOS `libonnxruntime.dylib`) | OK / WARN | The library Kokoro needs is present. WARN says "Kokoro cannot run; Windows voices only" (on macOS "macOS voices only") | Run `/sonara:start`. If it stays missing, restart Claude Code so the runtime reinstalls |
 | `runtime` | OK | `running` or `started now`, with version and pid | Nothing |
 | `runtime` | WARN | `stopped; run /sonara:start`, or `running ... but shut down for the hooks` | Run `/sonara:start`. See [the stopped file](#the-stopped-file) |
 | `runtime` | FAIL | The runtime could not start, with the reason | Read `logs\sonarad.log` and `logs\bootstrap.log`, then run `/sonara:start`. Still failing: [report a bug](#report-a-bug) |
@@ -121,7 +121,7 @@ The Audio page options: **Other apps**: Off, Duck, Pause. **Duck to**: 0 to 100 
 
 ## Logs
 
-All logs are in `%LOCALAPPDATA%\Sonara\logs\`.
+All logs are in `%LOCALAPPDATA%\Sonara\logs\` (on macOS `~/Library/Application Support/Sonara/logs/`). On macOS `bootstrap.log` also names a code signature that did not verify, or a release that has no macOS build.
 
 | File | Written by | Holds |
 |---|---|---|

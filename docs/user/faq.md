@@ -5,7 +5,7 @@ Short answers to the questions people ask most, with a link to the page that has
 ## Questions
 
 **Which systems does it run on?**
-Windows 10 and 11, 64-bit, with Claude Code. Nothing else. Claude Code on Windows needs Git for Windows, and Sonara's hooks run through its Git Bash. No Python, no installer and no administrator rights.
+Windows 10 and 11, 64-bit, or macOS 14 or later on Apple silicon, with Claude Code. Nothing else. Claude Code on Windows needs Git for Windows, and Sonara's hooks run through its Git Bash; on macOS the system's own bash runs them. No Python, no installer and no administrator rights. What differs on a Mac: [Getting started](getting-started.md#on-macos).
 More: [Getting started](getting-started.md).
 
 **Does it need the internet?**
@@ -57,11 +57,11 @@ Yes. Each session has its own queue and name. Press **Ctrl+Alt+P** to move the v
 More: [Several sessions](sessions.md).
 
 **Where are the settings, and how do I open them?**
-Run `/sonara:settings` to open the settings page in your browser. Changes apply at once and are saved in `%LOCALAPPDATA%\Sonara\config.json`, which holds only the values you changed.
+Run `/sonara:settings` to open the settings page in your browser. Changes apply at once and are saved in `%LOCALAPPDATA%\Sonara\config.json` (on macOS `~/Library/Application Support/Sonara/config.json`), which holds only the values you changed.
 More: [Settings](settings.md).
 
 **How do I remove it?**
-Run `/sonara:uninstall` (it asks what to keep), then `/plugin uninstall sonara@sonara`. Optionally delete `%LOCALAPPDATA%\Sonara` to remove what you kept.
+Run `/sonara:uninstall` (it asks what to keep), then `/plugin uninstall sonara@sonara`. Optionally delete `%LOCALAPPDATA%\Sonara` (on macOS `~/Library/Application Support/Sonara`) to remove what you kept.
 More: [PRIVACY.md](../../PRIVACY.md) lists every file.
 
 ## See also
