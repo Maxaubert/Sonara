@@ -17,6 +17,12 @@ rodio.workspace = true
 # The default render endpoint's id, to follow a change of the default output (#288).
 windows = { workspace = true, features = ["Win32_Media_Audio", "Win32_System_Com"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The default output device's UID, to follow a change of the default output
+# (#288). Both are already in the build through cpal's CoreAudio host.
+objc2-core-audio = { version = "0.3.2", default-features = false, features = ["std", "AudioHardware"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFString"] }
+
 [dev-dependencies]
 # Builds TestOutput with the crate's own tests and lints.
 sonara-audio = { path = ".", features = ["test-util"] }
