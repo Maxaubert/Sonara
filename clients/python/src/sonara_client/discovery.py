@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from typing import Optional, Sequence
 
@@ -21,13 +22,22 @@ CREATE_NEW_PROCESS_GROUP = 0x00000200
 _started: list = []
 
 
-def resolve_home(home: Optional[str] = None, env=None) -> str:
-    """``home``, else ``SONARA_HOME``, else ``%LOCALAPPDATA%\\Sonara``."""
+def resolve_home(home: Optional[str] = None, env=None, platform: Optional[str] = None) -> str:
+    """``home``, else ``SONARA_HOME``, else the platform default:
+    ``%LOCALAPPDATA%\\Sonara`` on Windows, ``$HOME/Library/Application
+    Support/Sonara`` on macOS (``platform`` is a ``sys.platform`` value; the
+    runtime and the plugin's launchers use the same path)."""
     env = os.environ if env is None else env
+    platform = sys.platform if platform is None else platform
     if home:
         return str(home)
     if env.get("SONARA_HOME"):
         return env["SONARA_HOME"]
+    if platform == "darwin":
+        if env.get("HOME"):
+            # Joined with "/", as the runtime does: it is a POSIX path.
+            return env["HOME"].rstrip("/") + "/Library/Application Support/Sonara"
+        raise SonaraError(E_NOT_RUNNING, "no home folder: pass home, or set SONARA_HOME or HOME")
     if env.get("LOCALAPPDATA"):
         return os.path.join(env["LOCALAPPDATA"], "Sonara")
     raise SonaraError(E_NOT_RUNNING, "no home folder: pass home, or set SONARA_HOME or LOCALAPPDATA")
@@ -55,6 +65,14 @@ def pid_alive(pid: int) -> bool:
         return False
     if os.name == "nt":
         return _pid_alive_windows(pid)
+    # A child of this process that has ended (a runtime it started and then
+    # took over) stays a zombie until it is reaped, and signal 0 still finds
+    # a zombie: reap it here, so it counts as ended.
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except OSError:
+        pass  # Not a child of this process.
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

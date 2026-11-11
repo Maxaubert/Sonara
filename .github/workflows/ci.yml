@@ -73,8 +73,12 @@ jobs:
       - name: Notices up to date
         run: python packaging/notices/gen_notices.py --check
 
-  # The macOS port (advisory until the first macOS release; not in
-  # REQUIRED_CHECKS yet): the workspace and conformance on Apple Silicon.
+  # The macOS port (advisory until branch protection requires it; in
+  # packaging/gate.py ADVISORY_CHECKS, not REQUIRED_CHECKS): the workspace,
+  # the repo checks and conformance on Apple Silicon, the plugin suite
+  # included (bin/sonara-hook-launch and bin/sonara-bootstrap.sh under the
+  # system /bin/bash 3.2, codesign, a release tar.gz installed by the
+  # first hook).
   macos:
     runs-on: macos-latest
     timeout-minutes: 40
@@ -94,8 +98,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: cargo build -p sonarad -p sonara-hook -p sonara-cli
-      - run: pip install pytest
-      - run: python -m pytest conformance -q --ignore=conformance/plugin
+      - run: python -m pip install pytest pyyaml
+      - name: Repo checks
+        run: python -m pytest tests/repo -q
+      - name: Conformance (with the plugin)
+        env:
+          SONARA_TEST_HOOK_QUICK: "5"
+          SONARA_TEST_IDLE_EXIT: "1"
+        run: python -m pytest conformance -q
 
   # Protocol v1 conformance: black-box tests against the built debug
   # binaries (fake engine, silent output; no audio device or voices needed).
@@ -204,8 +214,8 @@ jobs:
           python packaging/build_packages.py --publish-dry-run
 
   # cargo-deny-action is a Docker action, which GitHub runs only on Linux
-  # runners. deny.toml pins the graph to the Windows target, so Windows-only
-  # dependencies are still checked from here.
+  # runners. deny.toml pins the graph to the Windows and macOS targets, so
+  # their platform-only dependencies are still checked from here.
   deny:
     runs-on: ubuntu-latest
     timeout-minutes: 15

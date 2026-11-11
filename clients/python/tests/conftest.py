@@ -99,7 +99,8 @@ def find_sonarad():
     env = os.environ.get("SONARAD")
     if env:
         return Path(env)
-    found = [REPO / "target" / p / "sonarad.exe" for p in ("release", "debug")]
+    exe = "sonarad.exe" if sys.platform == "win32" else "sonarad"
+    found = [REPO / "target" / p / exe for p in ("release", "debug")]
     found = [p for p in found if p.is_file()]
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 

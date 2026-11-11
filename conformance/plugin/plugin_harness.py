@@ -1,20 +1,25 @@
 """Helpers for the plugin suite (#202): the bash launcher and wrapper in
-``bin/``, the PowerShell bootstrap, the built ``sonara.exe`` and the release
-zip, driven as Claude Code drives them (Git Bash, payload on stdin), with
-temporary ``LOCALAPPDATA``, ``SONARA_HOME`` and ``USERPROFILE`` folders and
-a local HTTP server standing in for GitHub releases. Nothing touches this
-PC's Sonara, Claude Code settings or audio: every runtime started here runs
-``--engine fake --system fake`` on a temporary home."""
+``bin/``, the bootstrap (PowerShell on Windows, bash on macOS), the built
+``sonara`` and the release archive, driven as Claude Code drives them (Git
+Bash on Windows, the system ``/bin/bash`` 3.2 on macOS, payload on stdin),
+with temporary ``LOCALAPPDATA`` (on macOS ``HOME``), ``SONARA_HOME`` and
+``USERPROFILE`` folders and a local HTTP server standing in for GitHub
+releases. Nothing touches this computer's Sonara, Claude Code settings or
+audio: every runtime started here runs ``--engine fake --system fake`` on a
+temporary home."""
 from __future__ import annotations
 
 import hashlib
 import http.server
 import importlib.util
 import json
+import io
 import os
 import shutil
+import signal
 import socket
 import subprocess
+import tarfile
 import threading
 import time
 import zipfile
@@ -25,8 +30,17 @@ import harness
 REPO = harness.REPO
 BIN = REPO / "bin"
 VERSION = (BIN / "runtime-version").read_text(encoding="utf-8").strip()
-ZIP_NAME = f"sonara-runtime-win-x64-{VERSION}.zip"
-EXES = ("sonarad.exe", "sonara-hook.exe", "sonara.exe")
+WINDOWS = harness.WINDOWS
+EXE = harness.EXE
+PLATFORM = "win-x64" if WINDOWS else "macos-arm64"
+# The release archive of this platform (a zip on Windows, a tar.gz on macOS).
+ZIP_NAME = (f"sonara-runtime-win-x64-{VERSION}.zip" if WINDOWS
+            else f"sonara-runtime-macos-arm64-{VERSION}.tar.gz")
+SONARAD, HOOK, CLI = (f"sonarad{EXE}", f"sonara-hook{EXE}", f"sonara{EXE}")
+EXES = (SONARAD, HOOK, CLI)
+# ONNX Runtime as it ships next to sonarad (doctor names this row after it).
+ORT = "onnxruntime.dll" if WINDOWS else "libonnxruntime.dylib"
+NO_WINDOW = harness.NO_WINDOW
 FAKE = "--engine fake --system fake --keys fake"
 # A hook may take at most about a second (Claude Code waits for it). The
 # wall-clock bound is loose on a busy CI runner, where Git Bash alone can
@@ -37,6 +51,9 @@ QUICK = float(os.environ.get("SONARA_TEST_HOOK_QUICK") or "1.5")
 
 
 def find_bash() -> Path | None:
+    """Git Bash on Windows; macOS's own /bin/bash (3.2, as hooks get it)."""
+    if not WINDOWS:
+        return Path("/bin/bash") if Path("/bin/bash").is_file() else None
     for root in (os.environ.get("ProgramFiles", r"C:\Program Files"),
                  os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
         cand = Path(root) / "Git" / "bin" / "bash.exe"
@@ -69,31 +86,46 @@ def release_zip_module():
 
 def build_release(exes: Path, out: Path) -> tuple[bytes, bytes]:
     """A release built by packaging/release_zip.py from the built
-    executables: (zip bytes, SHA256SUMS bytes). The fake engine never loads
-    ONNX Runtime, so placeholders stand in when it is not staged."""
+    executables: (archive bytes, SHA256SUMS bytes). The fake engine never
+    loads ONNX Runtime, so placeholders stand in when it is not staged (on
+    macOS a copy of a signed executable, so the bootstrap's signature check
+    passes)."""
     stage = out / "stage"
     stage.mkdir(parents=True)
     for e in EXES:
         shutil.copy2(exes / e, stage / e)
-    for f in ("onnxruntime.dll", "onnxruntime-LICENSE.txt"):
+    for f in (ORT, "onnxruntime-LICENSE.txt"):
         src = exes / f
         if src.is_file():
             shutil.copy2(src, stage / f)
+        elif f == ORT and not WINDOWS:
+            shutil.copy2(exes / HOOK, stage / f)
         else:
             (stage / f).write_bytes(b"placeholder: the fake engine never loads it")
     rz = release_zip_module()
-    path = rz.build_zip(stage / "sonarad.exe", out / "dist", VERSION)
+    path = rz.build_archive(stage / SONARAD, out / "dist", VERSION, PLATFORM)
     sums = rz.write_sums([path], out / "dist")
     return path.read_bytes(), sums.read_bytes()
 
 
-def fake_zip(exes: Path) -> bytes:
-    """A small release zip: the three executables under the release folder."""
-    import io
+def fake_zip(exes: Path, files: dict | None = None) -> bytes:
+    """A small release archive of this platform: the three executables
+    under the release folder (``files`` replaces or adds ``name: bytes``)."""
+    folder = f"sonara-runtime-{PLATFORM}-{VERSION}"
+    entries = {e: (exes / e).read_bytes() for e in EXES}
+    entries.update(files or {})
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        for e in EXES:
-            z.write(exes / e, f"sonara-runtime-win-x64-{VERSION}/{e}")
+    if WINDOWS:
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            for name, data in entries.items():
+                z.writestr(f"{folder}/{name}", data)
+        return buf.getvalue()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        for name, data in entries.items():
+            info = tarfile.TarInfo(f"{folder}/{name}")
+            info.size = len(data)
+            info.mode = 0o755
+            t.addfile(info, io.BytesIO(data))
     return buf.getvalue()
 
 
@@ -177,9 +209,14 @@ class Box:
                   "SONARA_RELEASE_BASE_URL", "CLAUDE_PLUGIN_ROOT"):
             env.pop(k, None)
         bash = find_bash()
-        if bash is not None:
+        if bash is not None and WINDOWS:
             tools = bash.parent.parent / "usr" / "bin"
             env["PATH"] = os.pathsep.join([str(tools), env.get("PATH", "")])
+        if not WINDOWS:
+            # The default home is under HOME on macOS (with a space in it).
+            self.root = self.lad / "Library" / "Application Support" / "Sonara" / "runtime"
+            self.dest = self.root / VERSION
+            env["HOME"] = str(self.lad)
         env.update({
             "LOCALAPPDATA": str(self.lad),
             "SONARA_HOME": str(self.home),
@@ -203,19 +240,18 @@ class Box:
         t0 = time.monotonic()
         p = subprocess.run([str(find_bash()), posix(BIN / "sonara-hook-launch"), event],
                            input=data, capture_output=True, env=env, timeout=timeout,
-                           creationflags=harness.CREATE_NO_WINDOW)
+                           **NO_WINDOW)
         return p.returncode, time.monotonic() - t0
 
     def wrapper(self, *args: str, timeout: float = 180.0) -> subprocess.CompletedProcess:
         """``bash bin/sonara <args>``, as the slash commands run it."""
         return subprocess.run([str(find_bash()), posix(BIN / "sonara"), *args],
                               capture_output=True, text=True, env=self.env, timeout=timeout,
-                              creationflags=harness.CREATE_NO_WINDOW)
+                              **NO_WINDOW)
 
     def cli(self, exe: Path, *args: str, timeout: float = 60.0) -> subprocess.CompletedProcess:
         return subprocess.run([str(exe), *args], capture_output=True, text=True,
-                              env=self.env, timeout=timeout,
-                              creationflags=harness.CREATE_NO_WINDOW)
+                              env=self.env, timeout=timeout, **NO_WINDOW)
 
     def install(self, exes: Path, version: str = VERSION) -> Path:
         """The runtime as the bootstrap leaves it."""
@@ -255,8 +291,8 @@ class Box:
 
     def stop_runtime(self, exes: Path | None = None) -> None:
         """End a runtime started on this home (teardown)."""
-        exe = (self.dest / "sonara.exe") if (self.dest / "sonara.exe").is_file() else (
-            exes / "sonara.exe" if exes else None)
+        exe = (self.dest / CLI) if (self.dest / CLI).is_file() else (
+            exes / CLI if exes else None)
         if exe is not None and exe.is_file():
             try:
                 self.cli(exe, "stop", timeout=30)
@@ -264,5 +300,11 @@ class Box:
                 pass
         info = self.runtime_info()
         if info and info.get("pid"):
-            subprocess.run(["taskkill", "/F", "/PID", str(info["pid"])],
-                           capture_output=True, creationflags=harness.CREATE_NO_WINDOW)
+            if WINDOWS:
+                subprocess.run(["taskkill", "/F", "/PID", str(info["pid"])],
+                               capture_output=True, **NO_WINDOW)
+            else:
+                try:
+                    os.kill(info["pid"], signal.SIGKILL)
+                except OSError:
+                    pass

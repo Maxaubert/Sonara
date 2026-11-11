@@ -147,20 +147,28 @@ describe("connect", () => {
   });
 });
 
-// cmd.exe stands in for a sonarad that exits at once: it ignores the
-// leading "--home <home>" and runs what follows /c.
+// A stand-in for a sonarad that exits at once: on Windows cmd.exe, which
+// ignores the leading "--home <home>" and runs what follows /c; elsewhere a
+// shell script (it ignores its arguments) running `sh`.
 const CMD = process.env.ComSpec || "cmd.exe";
+function standIn(winArgs, sh) {
+  if (process.platform === "win32") return { runtimePath: CMD, runtimeArgs: winArgs };
+  const script = join(home, "stand-in.sh");
+  writeFileSync(script, `#!/bin/sh\n${sh}\n`, { mode: 0o755 });
+  return { runtimePath: script, runtimeArgs: [] };
+}
 
 describe("starting the runtime", () => {
   it("uses the other client's runtime when the started one exits with code 3", async () => {
     fake = await startFake(home);
-    const info = await startRuntime(CMD, home, ["/d", "/c", "exit 3"], 5000);
+    const s = standIn(["/d", "/c", "exit 3"], "exit 3");
+    const info = await startRuntime(s.runtimePath, home, s.runtimeArgs, 5000);
     assert.equal(info.pid, fake.pid);
   });
 
   it("is E_START_FAILED when the started runtime exits with another code", async () => {
     await rejectsWith(
-      connect({ clientName: "unit", home, runtimePath: CMD, runtimeArgs: ["/d", "/c", "exit 1"] }),
+      connect({ clientName: "unit", home, ...standIn(["/d", "/c", "exit 1"], "exit 1") }),
       "E_START_FAILED",
     );
   });
@@ -170,8 +178,7 @@ describe("starting the runtime", () => {
       connect({
         clientName: "unit",
         home,
-        runtimePath: CMD,
-        runtimeArgs: ["/d", "/c", "ping -n 3 127.0.0.1 >nul"],
+        ...standIn(["/d", "/c", "ping -n 3 127.0.0.1 >nul"], "sleep 3"),
         startTimeoutMs: 300,
       }),
       "E_START_FAILED",

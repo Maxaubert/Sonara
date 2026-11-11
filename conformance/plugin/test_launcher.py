@@ -1,7 +1,8 @@
-"""bin/sonara-hook-launch and bin/sonara-bootstrap.ps1 (#202): the plugin's
-hooks run the runtime's sonara-hook.exe, and install the runtime from the
-GitHub release first when it is missing, without ever blocking or failing
-a Claude session."""
+"""bin/sonara-hook-launch and the bootstrap (#202; bin/sonara-bootstrap.ps1
+on Windows, bin/sonara-bootstrap.sh on macOS): the plugin's hooks run the
+runtime's sonara-hook, and install the runtime from the GitHub release
+first when it is missing, without ever blocking or failing a Claude
+session."""
 from __future__ import annotations
 
 import json
@@ -10,6 +11,7 @@ import subprocess
 import time
 
 import plugin_harness as ph
+import pytest
 
 QUICK = ph.QUICK
 NO_START = {"SONARA_BOOTSTRAP_START": "0"}
@@ -36,7 +38,7 @@ def test_a_missing_runtime_is_installed_in_the_background(box, releases, exes):
     assert not box.dest.exists(), "the hook returned before the install"
     assert took < QUICK, f"the hook took {took:.2f} s"
     r.open_gate()
-    box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
+    box.wait_for(lambda: (box.dest / ph.HOOK).is_file(), what="the install")
     box.wait_bootstrap()
     for e in ph.EXES:
         assert (box.dest / e).is_file(), e
@@ -80,13 +82,13 @@ def test_parallel_hooks_start_a_single_bootstrap(box, releases, exes):
     procs = [
         subprocess.Popen([str(ph.find_bash()), ph.posix(ph.BIN / "sonara-hook-launch"), ev],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         env=env, creationflags=0x08000000)
+                         env=env, **ph.NO_WINDOW)
         for ev in ["SessionStart", "UserPromptSubmit", "MessageDisplay", "PreToolUse"] * 2
     ]
     for p in procs:
         p.communicate(b"{}", timeout=30)
         assert p.returncode == 0
-    box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
+    box.wait_for(lambda: (box.dest / ph.HOOK).is_file(), what="the install")
     box.wait_bootstrap()
     assert r.hits.get(ph.ZIP_NAME) == 1, r.hits
 
@@ -112,7 +114,7 @@ def test_an_upgrade_removes_the_old_runtime(box, releases, exes):
     old = box.install(exes, "0.0.1")
     code, _ = box.launch("SessionStart", {}, NO_START)
     assert code == 0
-    box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
+    box.wait_for(lambda: (box.dest / ph.HOOK).is_file(), what="the install")
     box.wait_bootstrap()
     assert not old.exists(), "only the current release is kept"
     assert "Removed the old runtime 0.0.1" in box.log()
@@ -135,7 +137,7 @@ def test_the_wrapper_installs_the_runtime_before_a_command(box, releases, exes):
     assert p.returncode == 0, p.stdout + p.stderr
     assert "Installing the Sonara runtime" in p.stdout
     assert f"sonara {ph.VERSION}" in p.stdout
-    assert (box.dest / "sonara.exe").is_file()
+    assert (box.dest / ph.CLI).is_file()
     assert not (box.root / ".bootstrap.lock").exists()
 
 
@@ -149,14 +151,22 @@ def test_the_wrapper_names_the_plugin_for_the_doctor(box, exes):
     assert "[ OK ] hooks:" in p.stdout, p.stdout
 
 
+NO_START_ARG = "-NoStart" if ph.WINDOWS else "--no-start"
+
+
+def bootstrap_argv(*args):
+    """This platform's bootstrap for the plugin's version, as bin/sonara runs it."""
+    if ph.WINDOWS:
+        return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                "-File", str(ph.BIN / "sonara-bootstrap.ps1"), "-Version", ph.VERSION, *args]
+    return [str(ph.find_bash()), str(ph.BIN / "sonara-bootstrap.sh"), "--version", ph.VERSION, *args]
+
+
 def run_bootstrap(box, *args):
-    """bin/sonara-bootstrap.ps1 in the foreground, as bin/sonara runs it."""
+    """The bootstrap in the foreground, as bin/sonara runs it."""
     env = {k: v for k, v in box.env.items() if k.upper() != "PSMODULEPATH"}
-    return subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-         "-File", str(ph.BIN / "sonara-bootstrap.ps1"), "-Version", ph.VERSION, *args],
-        capture_output=True, text=True, env=env, timeout=180,
-        creationflags=0x08000000)
+    return subprocess.run(bootstrap_argv(*args), capture_output=True, text=True, env=env, timeout=180,
+                          **ph.NO_WINDOW)
 
 
 def test_an_older_plugin_uses_a_newer_installed_runtime(box, releases, exes, tmp_path):
@@ -182,7 +192,7 @@ def test_an_older_runtime_does_not_serve_the_plugin(box, releases, exes):
     box.install(exes, "0.0.1")
     code, _ = box.launch("SessionStart", {}, NO_START)
     assert code == 0
-    box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
+    box.wait_for(lambda: (box.dest / ph.HOOK).is_file(), what="the install")
     box.wait_bootstrap()
 
 
@@ -204,7 +214,7 @@ def test_the_bootstrap_removes_older_runtimes_only(box, releases, exes):
     box.env.update(NO_START)
     p = run_bootstrap(box)
     assert p.returncode == 0, p.stdout + p.stderr
-    assert (box.dest / "sonara-hook.exe").is_file()
+    assert (box.dest / ph.HOOK).is_file()
     assert not old.exists()
     assert newer.is_dir(), "a newer plugin's runtime stays"
 
@@ -214,10 +224,10 @@ def test_a_bootstrap_with_nostart_keeps_the_older_runtime_that_still_runs(box, r
     # runs from the older folder, so the folder stays until `sonara start`.
     serve_good_release(box, releases, exes)
     old = box.install(exes, "0.0.1")
-    p = run_bootstrap(box, "-NoStart")
+    p = run_bootstrap(box, NO_START_ARG)
     assert p.returncode == 0, p.stdout + p.stderr
-    assert (box.dest / "sonara-hook.exe").is_file()
-    assert (old / "sonara-hook.exe").is_file(), "the older runtime is left whole"
+    assert (box.dest / ph.HOOK).is_file()
+    assert (old / ph.HOOK).is_file(), "the older runtime is left whole"
 
 
 def test_a_bootstrap_keeps_an_install_that_appeared_during_its_download(box, releases, exes):
@@ -229,10 +239,8 @@ def test_a_bootstrap_keeps_an_install_that_appeared_during_its_download(box, rel
     box.env["SONARA_RELEASE_BASE_URL"] = r.url
     env = {k: v for k, v in box.env.items() if k.upper() != "PSMODULEPATH"}
     env.update(NO_START)
-    p = subprocess.Popen(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-         "-File", str(ph.BIN / "sonara-bootstrap.ps1"), "-Version", ph.VERSION],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, creationflags=0x08000000)
+    p = subprocess.Popen(bootstrap_argv(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                         **ph.NO_WINDOW)
     box.wait_for(lambda: r.hits.get("SHA256SUMS"), what="the first download")
     box.install(exes)
     marker = box.dest / "in-use.txt"
@@ -241,7 +249,7 @@ def test_a_bootstrap_keeps_an_install_that_appeared_during_its_download(box, rel
     out, err = p.communicate(timeout=180)
     assert p.returncode == 0, (out + err).decode(errors="replace")
     assert marker.is_file(), "the install that appeared was not deleted"
-    assert (box.dest / "sonara-hook.exe").is_file()
+    assert (box.dest / ph.HOOK).is_file()
     assert not [d for d in box.root.iterdir() if d.name.startswith(".")], "no leftovers"
 
 
@@ -261,7 +269,7 @@ def test_a_stale_lock_is_not_taken_over_while_another_hook_takes_it(box, release
     (box.root / ".bootstrap.lock.takeover").rmdir()
     code, _ = box.launch("SessionStart", {}, NO_START)
     assert code == 0
-    box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
+    box.wait_for(lambda: (box.dest / ph.HOOK).is_file(), what="the install")
     box.wait_bootstrap()
     assert not [d for d in box.root.iterdir() if d.name.startswith(".")], "no leftovers"
 
@@ -278,6 +286,7 @@ def test_a_home_with_forward_slashes_is_still_stopped(box, releases, exes):
     assert not box.dest.exists()
 
 
+@pytest.mark.skipif(not ph.WINDOWS, reason="LOCALAPPDATA is the Windows base")
 def test_a_localappdata_with_forward_slashes_finds_the_runtime(box, releases, exes, tmp_path):
     r = serve_good_release(box, releases, exes)
     box.install(exes)
@@ -303,5 +312,68 @@ def test_the_wrapper_takes_over_a_stale_lock_only(box, releases, exes):
     os.utime(lock, (old, old))
     p = box.wrapper("version", timeout=60)
     assert p.returncode == 0, p.stdout + p.stderr
-    assert (box.dest / "sonara.exe").is_file()
+    assert (box.dest / ph.CLI).is_file()
     assert not lock.exists()
+
+
+macos = pytest.mark.skipif(ph.WINDOWS, reason="the macOS bootstrap (bin/sonara-bootstrap.sh)")
+
+
+def _tampered(exe: bytes) -> bytes:
+    """``exe`` with one byte of its code changed: its signature no longer
+    matches (a page hash differs)."""
+    data = bytearray(exe)
+    i = len(data) // 3
+    data[i] ^= 0xFF
+    return bytes(data)
+
+
+@macos
+def test_an_archive_whose_signature_does_not_verify_installs_nothing(box, releases, exes):
+    data = ph.fake_zip(exes, {ph.HOOK: _tampered((exes / ph.HOOK).read_bytes())})
+    r = releases({ph.ZIP_NAME: data, "SHA256SUMS": ph.sums_for(data)})
+    box.env["SONARA_RELEASE_BASE_URL"] = r.url
+    box.env.update(NO_START)
+    p = run_bootstrap(box)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert not box.dest.exists()
+    assert "code signature of sonara-hook" in box.log()
+    assert (box.root / ".bootstrap.failed").is_file()
+    assert not [d for d in box.root.iterdir() if d.name.startswith(".staging")]
+
+
+@macos
+def test_a_release_without_a_macos_archive_says_so(box, releases, exes):
+    # A release of a version that has only the Windows zip (404 for ours).
+    data = ph.fake_zip(exes)
+    r = releases({"SHA256SUMS": ph.sums_for(data)})
+    box.env["SONARA_RELEASE_BASE_URL"] = r.url
+    box.env.update(NO_START)
+    p = run_bootstrap(box)
+    assert p.returncode == 1
+    assert f"no macOS build for {ph.VERSION}" in box.log()
+    assert not box.dest.exists()
+
+
+@macos
+def test_the_bootstrap_installs_from_a_file_url(box, exes, tmp_path):
+    # The download is curl's: a local mirror (file://) works as a test base.
+    data = ph.fake_zip(exes)
+    rel = tmp_path / "mirror" / f"v{ph.VERSION}"
+    rel.mkdir(parents=True)
+    (rel / ph.ZIP_NAME).write_bytes(data)
+    (rel / "SHA256SUMS").write_bytes(ph.sums_for(data))
+    box.env["SONARA_RELEASE_BASE_URL"] = (tmp_path / "mirror").as_uri()
+    box.env.update(NO_START)
+    p = run_bootstrap(box)
+    assert p.returncode == 0, p.stdout + p.stderr + box.log()
+    for e in ph.EXES:
+        assert os.access(box.dest / e, os.X_OK), e
+
+
+@macos
+def test_the_default_download_is_https_only(box):
+    # Without the test override the bootstrap only speaks https to GitHub.
+    text = (ph.BIN / "sonara-bootstrap.sh").read_text(encoding="utf-8")
+    assert 'protos="=https"' in text
+    assert "https://github.com/Maxaubert/Sonara/releases/download" in text

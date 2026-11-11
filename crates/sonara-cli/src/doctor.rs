@@ -228,6 +228,38 @@ pub fn hotkeys_row_for(h: &Value, mac: bool) -> Row {
     Row::new(status, "hotkeys", format!("{list}{active}"))
 }
 
+/// The ONNX Runtime library that ships next to `sonarad` on this platform,
+/// and what its absence means (`onnx_runtime_for`).
+pub fn onnx_runtime() -> (&'static str, &'static str) {
+    onnx_runtime_for(cfg!(target_os = "macos"))
+}
+
+/// `onnx_runtime` as on macOS (`mac`) or Windows.
+pub fn onnx_runtime_for(mac: bool) -> (&'static str, &'static str) {
+    if mac {
+        (
+            "libonnxruntime.dylib",
+            "Kokoro cannot run; macOS voices only",
+        )
+    } else {
+        ("onnxruntime.dll", "Kokoro cannot run; Windows voices only")
+    }
+}
+
+/// The OS voices built in next to Kokoro, as a user reads them.
+pub fn system_voices() -> &'static str {
+    system_voices_for(cfg!(target_os = "macos"))
+}
+
+/// `system_voices` as on macOS (`mac`) or Windows.
+pub fn system_voices_for(mac: bool) -> &'static str {
+    if mac {
+        "the macOS voices"
+    } else {
+        "the Windows voices"
+    }
+}
+
 /// The audio row from `audio_mode` and `duck_level`.
 pub fn audio_row(mode: &Value, level: &Value) -> Row {
     audio_row_for(mode, level, cfg!(target_os = "macos"))
@@ -268,6 +300,28 @@ pub fn audio_row_for(mode: &Value, level: &Value, mac: bool) -> Row {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_onnx_runtime_row_names_the_library_that_ships_on_each_platform() {
+        assert_eq!(
+            onnx_runtime_for(true),
+            (
+                "libonnxruntime.dylib",
+                "Kokoro cannot run; macOS voices only"
+            )
+        );
+        assert_eq!(
+            onnx_runtime_for(false),
+            ("onnxruntime.dll", "Kokoro cannot run; Windows voices only")
+        );
+        assert_eq!(onnx_runtime(), onnx_runtime_for(cfg!(target_os = "macos")));
+    }
+
+    #[test]
+    fn the_built_in_voices_are_named_per_platform() {
+        assert_eq!(system_voices_for(true), "the macOS voices");
+        assert_eq!(system_voices_for(false), "the Windows voices");
+    }
 
     #[test]
     fn rows_render_with_their_status() {

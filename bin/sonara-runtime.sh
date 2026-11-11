@@ -1,12 +1,13 @@
-# Sourced by bin/sonara-hook-launch and bin/sonara (#202): which installed
-# runtime serves this plugin version. Shell builtins only (no fork), so a
-# hook stays fast.
+# Sourced by bin/sonara-hook-launch, bin/sonara and bin/sonara-bootstrap.sh
+# (#202): which installed runtime serves this plugin version. Shell builtins
+# only (no fork), so a hook stays fast. Works with bash 3.2 (macOS).
 #
 # Upgrades go one way. Claude Code keeps one plugin folder per version, and
 # sessions started before a plugin update keep the old one. Their hooks use
-# the newest runtime installed in %LOCALAPPDATA%\Sonara\runtime\ that is at
-# least bin/runtime-version, so they never download their older release
-# again (which would replace the newer runtime, and back).
+# the newest runtime installed in <base>/runtime/ (%LOCALAPPDATA%\Sonara on
+# Windows, ~/Library/Application Support/Sonara on macOS) that is at least
+# bin/runtime-version, so they never download their older release again
+# (which would replace the newer runtime, and back).
 
 # sonara_ver_lt A B: version A (major.minor.patch) is older than B.
 sonara_ver_lt() {

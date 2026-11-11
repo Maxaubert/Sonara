@@ -2,8 +2,9 @@
 is to ship these notices).
 
 Sources:
-- ``cargo metadata``: every crate compiled into ``sonarad.exe`` for
-  x86_64-pc-windows-msvc (normal dependencies only; build and dev
+- ``cargo metadata``: every crate compiled into ``sonarad`` for any of
+  x86_64-pc-windows-msvc and aarch64-apple-darwin (``TARGETS``; normal
+  dependencies only; build and dev
   dependencies do not ship), with its licence, authors and repository.
 - ``models-and-data.md`` next to this script: hand-maintained notices for
   model weights, data and Microsoft components that are not crates.
@@ -29,18 +30,30 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 OUT = REPO / "THIRD_PARTY_NOTICES.md"
 TARGET = "x86_64-pc-windows-msvc"
+# Every platform a release archive is built for; the notices list the crates
+# of all of them (one THIRD_PARTY_NOTICES.md ships in each archive).
+TARGETS = (TARGET, "aarch64-apple-darwin")
 ROOT_CRATE = "sonarad"
 # Under an "A OR B" choice, the licence the notices elect (the simplest to
 # comply with first). Every id here is also in deny.toml's allowlist.
 PREFERENCE = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016"]
 
 
-def cargo_metadata() -> dict:
+def cargo_metadata(target: str = TARGET) -> dict:
     out = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--locked", "--filter-platform", TARGET],
+        ["cargo", "metadata", "--format-version", "1", "--locked", "--filter-platform", target],
         cwd=REPO, capture_output=True, text=True, encoding="utf-8", check=True,
     )
     return json.loads(out.stdout)
+
+
+def all_shipped_crates() -> list:
+    """The crates of every release target (``TARGETS``), each once."""
+    seen = {}
+    for target in TARGETS:
+        for p in shipped_crates(cargo_metadata(target)):
+            seen[p["id"]] = p
+    return sorted(seen.values(), key=lambda p: (p["name"], p["version"]))
 
 
 def shipped_crates(meta: dict) -> list:
@@ -139,7 +152,7 @@ def render(crates: list) -> str:
         "The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python package"
         " `sonara-client` have no third-party dependencies.",
         "",
-        f"## Rust crates in sonarad.exe ({TARGET})",
+        f"## Rust crates in sonarad ({', '.join(TARGETS)})",
         "",
         f"{len(crates)} crates. Where a crate offers a choice of licences, Sonara uses it under the one"
         " in the \"used under\" column. Copyright belongs to the authors listed.",
@@ -164,7 +177,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="exit 1 when THIRD_PARTY_NOTICES.md is out of date")
     args = ap.parse_args(argv)
-    text = render(shipped_crates(cargo_metadata()))
+    text = render(all_shipped_crates())
     if args.check:
         current = OUT.read_text(encoding="utf-8").replace("\r\n", "\n") if OUT.is_file() else ""
         if current != text:

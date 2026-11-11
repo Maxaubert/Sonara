@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import sys
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -102,3 +104,88 @@ def test_the_notices_ship_with_a_licensing_summary():
     for needle in ("Kokoro-82M", "misaki", "ONNX Runtime", "Visual C++", "### Apache-2.0", "### MIT"):
         assert needle in notices, needle
     assert "—" not in text + notices
+
+
+MACOS_EXES = ("sonarad", "sonara-hook", "sonara")
+
+
+def _macos_build(tmp_path):
+    build = tmp_path / "release"
+    build.mkdir()
+    for name in MACOS_EXES:
+        (build / name).write_bytes(b"\xcf\xfa\xed\xfe " + name.encode())
+    for f in ("libonnxruntime.dylib", "onnxruntime-LICENSE.txt", "onnxruntime-ThirdPartyNotices.txt"):
+        (build / f).write_bytes(b"runtime file")
+    (build / "sonarad.d").write_bytes(b"not shipped")
+    return build / "sonarad"
+
+
+def test_the_macos_archive_is_a_tar_gz_that_keeps_the_exec_bits(tmp_path):
+    rz = _module()
+    path = rz.build_archive(_macos_build(tmp_path), tmp_path / "dist", "1.2.3", "macos-arm64")
+    assert path.name == "sonara-runtime-macos-arm64-1.2.3.tar.gz"
+    top = "sonara-runtime-macos-arm64-1.2.3"
+    with tarfile.open(path, "r:gz") as t:
+        members = {m.name: m for m in t.getmembers()}
+        assert t.extractfile(f"{top}/sonara-hook").read() == b"\xcf\xfa\xed\xfe sonara-hook"
+    files = sorted(n for n, m in members.items() if m.isfile())
+    assert files == sorted(
+        f"{top}/{n}" for n in (*MACOS_EXES, "libonnxruntime.dylib", "onnxruntime-LICENSE.txt",
+                               "onnxruntime-ThirdPartyNotices.txt", "LICENSE", "LICENSING.md",
+                               "THIRD_PARTY_NOTICES.md"))
+    for n in (*MACOS_EXES, "libonnxruntime.dylib"):
+        assert members[f"{top}/{n}"].mode == 0o755, n
+    assert members[f"{top}/LICENSE"].mode == 0o644
+    assert all(m.isfile() or m.isdir() for m in members.values()), "no links"
+    assert not [n for n in members if "/._" in n or n.startswith("._")], "no AppleDouble files"
+    assert {m.uname for m in members.values()} == {""}
+
+
+def test_the_macos_archive_needs_the_dylib_for_kokoro(tmp_path):
+    exe = _macos_build(tmp_path)
+    (exe.parent / "libonnxruntime.dylib").unlink()
+    with pytest.raises(SystemExit, match="runtime_dlls.py stage"):
+        _module().build_archive(exe, tmp_path / "dist", "1.2.3", "macos-arm64")
+
+
+def test_the_default_platform_is_this_machines():
+    rz = _module()
+    assert rz.host_platform() == ("macos-arm64" if sys.platform == "darwin" else "win-x64")
+    assert rz.archive_name("win-x64", "1.2.3") == "sonara-runtime-win-x64-1.2.3.zip"
+    assert rz.archive_name("macos-arm64", "1.2.3") == "sonara-runtime-macos-arm64-1.2.3.tar.gz"
+
+
+def test_one_sha256sums_lists_both_platform_archives(tmp_path):
+    # One release serves both platforms: its SHA256SUMS lists both assets.
+    rz = _module()
+    win, mac, dist = tmp_path / "win", tmp_path / "mac", tmp_path / "dist"
+    for d in (win, mac, dist):
+        d.mkdir()
+    (win / "sonara-runtime-win-x64-1.2.3.zip").write_bytes(b"zip")
+    (mac / "sonara-runtime-macos-arm64-1.2.3.tar.gz").write_bytes(b"tgz")
+    rz.write_sums([win / "sonara-runtime-win-x64-1.2.3.zip"], win)
+    rz.write_sums([mac / "sonara-runtime-macos-arm64-1.2.3.tar.gz"], mac)
+    (dist / "sonara-runtime-macos-arm64-1.2.3.tar.gz").write_bytes(b"tgz")
+    sums = rz.merge_sums([win / "SHA256SUMS", mac / "SHA256SUMS"], dist)
+
+    def h(b):
+        return hashlib.sha256(b).hexdigest()
+
+    assert sums.read_text(encoding="ascii") == (
+        f"{h(b'tgz')}  sonara-runtime-macos-arm64-1.2.3.tar.gz\n"
+        f"{h(b'zip')}  sonara-runtime-win-x64-1.2.3.zip\n")
+
+
+def test_merging_refuses_a_hash_its_asset_does_not_have(tmp_path):
+    rz = _module()
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "x.zip").write_bytes(b"one")
+    (b / "x.zip").write_bytes(b"two")
+    rz.write_sums([a / "x.zip"], a)
+    rz.write_sums([b / "x.zip"], b)
+    with pytest.raises(SystemExit, match="two different"):
+        rz.merge_sums([a / "SHA256SUMS", b / "SHA256SUMS"], tmp_path)
+    with pytest.raises(SystemExit, match="not the one SHA256SUMS lists"):
+        rz.merge_sums([a / "SHA256SUMS"], b)

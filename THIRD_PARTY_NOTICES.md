@@ -6,23 +6,30 @@ Sonara is MIT-licensed (see `LICENSE`). Anyone may bundle it, sell their product
 
 The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python package `sonara-client` have no third-party dependencies.
 
-## Rust crates in sonarad.exe (x86_64-pc-windows-msvc)
+## Rust crates in sonarad (x86_64-pc-windows-msvc, aarch64-apple-darwin)
 
-95 crates. Where a crate offers a choice of licences, Sonara uses it under the one in the "used under" column. Copyright belongs to the authors listed.
+114 crates. Where a crate offers a choice of licences, Sonara uses it under the one in the "used under" column. Copyright belongs to the authors listed.
 
 | crate | version | licence | used under | authors | source |
 |---|---|---|---|---|---|
 | aho-corasick | 1.1.5 | Unlicense OR MIT | MIT | Andrew Gallant | https://github.com/BurntSushi/aho-corasick |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | MIT | Stjepan Glavina, Contributors to futures-rs | https://github.com/smol-rs/atomic-waker |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | MIT | Marshall Pierce | https://github.com/marshallpierce/rust-base64 |
+| bitflags | 1.3.2 | MIT/Apache-2.0 | MIT | The Rust Project Developers | https://github.com/bitflags/bitflags |
+| bitflags | 2.13.2 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/bitflags/bitflags |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/utils |
 | bytes | 1.12.1 | MIT | MIT | Carl Lerche, Sean McArthur | https://github.com/tokio-rs/bytes |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | MIT | Alex Crichton | https://github.com/rust-lang/cfg-if |
+| core-foundation | 0.10.1 | MIT OR Apache-2.0 | MIT | The Servo Project Developers | https://github.com/servo/core-foundation-rs |
+| core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | MIT | The Servo Project Developers | https://github.com/servo/core-foundation-rs |
+| coreaudio-rs | 0.13.0 | MIT/Apache-2.0 | MIT | mitchmindtree, yupferris | https://github.com/RustAudio/coreaudio-rs.git |
 | cpal | 0.16.0 | Apache-2.0 | Apache-2.0 | the cpal authors | https://github.com/rustaudio/cpal |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/utils |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/traits |
 | dasp_sample | 0.11.0 | MIT OR Apache-2.0 | MIT | mitchmindtree | https://github.com/rustaudio/sample.git |
 | digest | 0.10.7 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/traits |
+| dispatch2 | 0.3.1 | Zlib OR Apache-2.0 OR MIT | MIT | Mads Marquart, Mary | https://github.com/madsmtm/objc2 |
+| errno | 0.3.14 | MIT OR Apache-2.0 | MIT | Chris Wong, Dan Gohman | https://github.com/lambda-fairy/rust-errno |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 | MIT | the futures-channel authors | https://github.com/rust-lang/futures-rs |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 | MIT | the futures-core authors | https://github.com/rust-lang/futures-rs |
 | generic-array | 0.14.7 | MIT | MIT | Bartłomiej Kamiński, Aaron Trent | https://github.com/fizyk20/generic-array.git |
@@ -35,9 +42,11 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 | hyper | 1.11.1 | MIT | MIT | Sean McArthur | https://github.com/hyperium/hyper |
 | hyper-util | 0.1.21 | MIT | MIT | Sean McArthur | https://github.com/hyperium/hyper-util |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | MIT | David Tolnay | https://github.com/dtolnay/itoa |
+| libc | 0.2.189 | MIT OR Apache-2.0 | MIT | the libc authors | https://github.com/rust-lang/libc |
 | libloading | 0.9.0 | ISC | ISC | Simonas Kazlauskas | https://github.com/nagisa/rust_libloading/ |
 | log | 0.4.34 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-lang/log |
 | lzma-rust2 | 0.15.8 | Apache-2.0 | Apache-2.0 | the lzma-rust2 authors | https://github.com/hasenbanck/lzma-rust2/ |
+| mach2 | 0.4.3 | BSD-2-Clause OR MIT OR Apache-2.0 | MIT | the mach2 authors | https://github.com/JohnTitor/mach2 |
 | matrixmultiply | 0.3.11 | MIT/Apache-2.0 | MIT | bluss, R. Janis Goldschmidt | https://github.com/bluss/matrixmultiply/ |
 | memchr | 2.8.3 | Unlicense OR MIT | MIT | Andrew Gallant, bluss | https://github.com/BurntSushi/memchr |
 | mio | 1.2.3 | MIT | MIT | Carl Lerche, Thomas de Zeeuw, Tokio Contributors | https://github.com/tokio-rs/mio |
@@ -48,6 +57,13 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 | num-rational | 0.4.2 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-num/num-rational |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-num/num-traits |
 | num2words | 0.4.1 | MIT OR Apache-2.0 | MIT | Asperatus | https://github.com/Ballasi/num2words/ |
+| objc2 | 0.6.4 | MIT | MIT | Mads Marquart | https://github.com/madsmtm/objc2 |
+| objc2-audio-toolbox | 0.3.2 | Zlib OR Apache-2.0 OR MIT | MIT | the objc2-audio-toolbox authors | https://github.com/madsmtm/objc2 |
+| objc2-core-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | MIT | the objc2-core-audio authors | https://github.com/madsmtm/objc2 |
+| objc2-core-audio-types | 0.3.2 | Zlib OR Apache-2.0 OR MIT | MIT | the objc2-core-audio-types authors | https://github.com/madsmtm/objc2 |
+| objc2-core-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT | MIT | the objc2-core-foundation authors | https://github.com/madsmtm/objc2 |
+| objc2-encode | 4.1.0 | MIT | MIT | Mads Marquart | https://github.com/madsmtm/objc2 |
+| objc2-foundation | 0.3.2 | MIT | MIT | the objc2-foundation authors | https://github.com/madsmtm/objc2 |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | MIT | Aleksey Kladov | https://github.com/matklad/once_cell |
 | ort | 2.0.0-rc.13 | MIT OR Apache-2.0 | MIT | pyke.io, Nicolas Bigaouette | https://github.com/pykeio/ort |
 | ort-sys | 2.0.0-rc.13 | MIT OR Apache-2.0 | MIT | pyke.io | https://github.com/pykeio/ort |
@@ -65,11 +81,14 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | MIT | the rustls-pki-types authors | https://github.com/rustls/pki-types |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | MIT | the rustls-platform-verifier authors | https://github.com/rustls/rustls-platform-verifier |
 | rustls-webpki | 0.103.15 | ISC | ISC | the rustls-webpki authors | https://github.com/rustls/webpki |
+| security-framework | 3.7.0 | MIT OR Apache-2.0 | MIT | Steven Fackler, Kornel | https://github.com/kornelski/rust-security-framework |
+| security-framework-sys | 2.17.0 | MIT OR Apache-2.0 | MIT | Steven Fackler, Kornel | https://github.com/kornelski/rust-security-framework |
 | serde | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/json |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/hashes |
+| signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | MIT | Michal 'vorner' Vaner, Masaki Hara | https://github.com/vorner/signal-hook |
 | smallvec | 1.16.2 | MIT OR Apache-2.0 | MIT | The Servo Project Developers | https://github.com/servo/rust-smallvec |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | MIT | Alex Crichton, Thomas de Zeeuw | https://github.com/rust-lang/socket2 |
 | subtle | 2.6.1 | BSD-3-Clause | BSD-3-Clause | Isis Lovecruft, Henry de Valence | https://github.com/dalek-cryptography/subtle |

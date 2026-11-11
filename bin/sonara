@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
-# The plugin's slash commands run `bin/sonara <command>` (#202): sonara.exe
+# The plugin's slash commands run `bin/sonara <command>` (#202): sonara(.exe)
 # of the runtime this plugin version needs (bin/runtime-version), or of the
 # newest newer one installed (bin/sonara-runtime.sh), from
-# %LOCALAPPDATA%\Sonara\runtime\<version>\. When none is installed, the
-# runtime is installed first, in the foreground, with
-# bin/sonara-bootstrap.ps1 (download, SHA-256 check, install).
+# <base>/runtime/<version>/ (<base>: %LOCALAPPDATA%\Sonara on Windows,
+# ~/Library/Application Support/Sonara on macOS). When none is installed,
+# the runtime is installed first, in the foreground: download, SHA-256
+# check, install, by bin/sonara-bootstrap.ps1 on Windows and
+# bin/sonara-bootstrap.sh on macOS (which also checks the code signature).
 here="$(cd "${0%/*}" 2>/dev/null && pwd)" || here="${0%/*}"
 ver=""
 { IFS= read -r ver < "$here/runtime-version"; } 2>/dev/null
 ver="${ver%$'\r'}"
-lad="${LOCALAPPDATA//\\//}"
-if [ -z "$ver" ] || [ -z "$lad" ]; then
-    echo "Sonara: cannot find bin/runtime-version or LOCALAPPDATA." >&2
+case "$OSTYPE" in
+darwin*)
+    base=""
+    [ -n "$HOME" ] && base="$HOME/Library/Application Support/Sonara"
+    x=""
+    basevar=HOME
+    ;;
+*)
+    lad="${LOCALAPPDATA//\\//}"
+    base=""
+    [ -n "$lad" ] && base="$lad/Sonara"
+    x=".exe"
+    basevar=LOCALAPPDATA
+    ;;
+esac
+if [ -z "$ver" ] || [ -z "$base" ]; then
+    echo "Sonara: cannot find bin/runtime-version or $basevar." >&2
     exit 1
 fi
-root="$lad/Sonara/runtime"
-exe="$root/$ver/sonara.exe"
+root="$base/runtime"
+exe="$root/$ver/sonara$x"
 if . "$here/sonara-runtime.sh" 2>/dev/null; then
-    sonara_pick_runtime "$root" "$ver" sonara.exe
-    [ -n "$sonara_rt" ] && exe="$root/$sonara_rt/sonara.exe"
+    sonara_pick_runtime "$root" "$ver" "sonara$x"
+    [ -n "$sonara_rt" ] && exe="$root/$sonara_rt/sonara$x"
 fi
 # `sonara doctor` checks the plugin's hooks; a slash command's Bash tool may
 # not have the variable set.
@@ -59,7 +75,9 @@ if [ ! -f "$exe" ]; then
         fi
         sleep 1
     done
-    if [ -n "$own" ] && [ ! -f "$exe" ]; then
+    if [ -n "$own" ] && [ ! -f "$exe" ] && [ -z "$x" ]; then
+        /bin/bash "$here/sonara-bootstrap.sh" --version "$ver" --lock "$lock" --no-start
+    elif [ -n "$own" ] && [ ! -f "$exe" ]; then
         ps1="$here/sonara-bootstrap.ps1"
         lockw="$lock"
         if command -v cygpath >/dev/null 2>&1; then
@@ -72,7 +90,12 @@ if [ ! -f "$exe" ]; then
         rm -rf "$lock"
     fi
     if [ ! -f "$exe" ]; then
-        echo "Sonara: the runtime could not be installed; see the log in %LOCALAPPDATA%\Sonara\logs\bootstrap.log." >&2
+        if [ -z "$x" ]; then
+            log="${SONARA_HOME:-$base}/logs/bootstrap.log"
+        else
+            log='%LOCALAPPDATA%\Sonara\logs\bootstrap.log'
+        fi
+        echo "Sonara: the runtime could not be installed; see the log in $log." >&2
         exit 1
     fi
 fi

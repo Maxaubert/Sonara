@@ -32,7 +32,7 @@ from . import support
 def runtime() -> Path:
     exe = support.find_runtime()
     if exe is None:
-        pytest.skip("no release sonarad.exe (cargo build -p sonarad --release) and SONARAD not set")
+        pytest.skip("no release sonarad (cargo build -p sonarad --release) and SONARAD not set")
     return exe
 
 
@@ -44,6 +44,8 @@ def node_app(runtime):
 
     if not (npm_app.NODE and npm_app.NPM):
         pytest.skip("node and npm are needed")
+    if not support.WINDOWS:
+        pytest.skip("the npm runtime package is @sonara/runtime-win32-x64 only (no darwin package yet)")
     npm_app.build_packages(runtime)
     d = Path(tempfile.mkdtemp(prefix="sonara-embed-npm-"))
     yield npm_app.pack_and_install(d)
@@ -67,9 +69,11 @@ def provider():
 
 
 def real_engine_or_skip(engine: str, runtime_dir: Path) -> None:
+    if engine == "onecore" and not support.WINDOWS:
+        pytest.skip("OneCore is the Windows voices")
     if engine == "kokoro":
-        if not (runtime_dir / "onnxruntime.dll").is_file():
-            pytest.skip("no onnxruntime.dll next to the runtime (python packaging/runtime_dlls.py stage ...)")
+        if not (runtime_dir / support.ORT).is_file():
+            pytest.skip(f"no {support.ORT} next to the runtime (python packaging/runtime_dlls.py stage ...)")
         if support.kokoro_models() is None:
             pytest.skip("Kokoro's model is not on this PC (set SONARA_KOKORO_MODELS)")
 

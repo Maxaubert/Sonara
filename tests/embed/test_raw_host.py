@@ -73,7 +73,7 @@ def test_runtime_json_has_the_documented_fields(rt):
 
 def test_a_second_runtime_for_the_same_home_exits_with_code_3(rt, runtime):
     r = subprocess.run([str(runtime), "--home", str(rt["home"]), "--engine", "fake"], capture_output=True,
-                       text=True, timeout=15, creationflags=raw.CREATE_NO_WINDOW)
+                       text=True, timeout=15, **raw.NO_WINDOW)
     assert r.returncode == 3
     assert "another instance is already running" in r.stderr
 
@@ -342,6 +342,8 @@ def test_the_powershell_recipe_of_bundling_md_runs_as_written(rt, shell, prelude
     exe = shutil.which(shell)
     if not exe:
         pytest.skip(f"{shell} is not installed")
+    if sys.platform != "win32":
+        pytest.skip("the PowerShell recipe is for Windows (curl.exe, LOCALAPPDATA)")
     lines = [ln for ln in _code_block(DOCS / "bundling.md", "## curl (any language)", "powershell").splitlines()
              if ln.strip()]
     assert lines[0].startswith("$rt = Get-Content"), lines[0]
