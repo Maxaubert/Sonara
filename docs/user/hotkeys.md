@@ -21,7 +21,7 @@ The defaults are the same keys with **Ctrl+Option** (Option is the Alt key), for
 
 - **VoiceOver** uses Ctrl+Option as its modifier. If you use VoiceOver, rebind the four hotkeys with Cmd (for example Ctrl+Option+Cmd+Up); the settings page and doctor remind you while a Ctrl+Option hotkey is bound.
 - **Mission Control and Spaces** use Ctrl+arrows. If an arrow hotkey shows as taken, change that shortcut in System Settings, Keyboard, Keyboard Shortcuts, or rebind with Cmd.
-- The hotkeys need no permission: they are registered with the system (not by reading the keyboard), so macOS asks for no Accessibility or Input Monitoring access. The one prompt you may see is an Automation prompt, the first time Sonara pauses Music or Spotify while it speaks ([Getting started](getting-started.md#on-macos)).
+- The hotkeys need no permission: they are registered with the system (not by reading the keyboard), so macOS asks for no Accessibility or Input Monitoring access. The one prompt you may see is an Automation prompt, the first time Sonara pauses Music or Spotify while it speaks (a video in a browser is paused through Now Playing, with no prompt) ([Getting started](getting-started.md#on-macos)).
 
 ## Tap versus hold
 

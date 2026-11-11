@@ -58,6 +58,13 @@ aloud before the question, like a reply. It reads nothing else from the transcri
 nothing. With the troubleshooting log on, that thinking appears in `hook.log` and `sonarad.log` like
 other text Sonara reads.
 
+On a Mac, with Other apps set to Pause or Duck, Sonara asks macOS which app is in Now Playing
+each time it starts and stops speaking: the app's bundle id, the title shown there and whether it
+plays, read by a short script that Apple's `/usr/bin/osascript` runs. It pauses that app only while
+it plays and later resumes it only if the same title is still there and paused. The title is held
+in memory for that comparison only, never stored or logged; `pause_state.json` and the log name the
+app's bundle id.
+
 The reading history Sonara uses for restart, summaries waiting to be read and each session's
 turn state are held in memory and are gone when the runtime stops.
 

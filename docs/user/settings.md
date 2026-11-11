@@ -81,7 +81,7 @@ Each finished reply costs one small call on your Claude or Codex login. See [sum
 | Label | Key | Default | Range or choices | Effect |
 |---|---|---|---|---|
 | Volume | `volume` | 100 | 0 to 100 percent, step 5 | Sonara's own volume. Chimes follow it |
-| Other apps | `audio_mode` | `pause` | `off` (Off), `duck` (Duck), `pause` (Pause) | What other apps do while Sonara speaks. Pause pauses media that Windows can control and resumes it. Duck lowers other apps. Off leaves them alone. They come back when Sonara stops, and on the next start if it was killed mid-sentence. On macOS Duck is greyed out (macOS has no per-app volume; a saved `duck` pauses instead), and Pause reaches Music and Spotify only: macOS asks once per app whether Sonara may control it |
+| Other apps | `audio_mode` | `pause` | `off` (Off), `duck` (Duck), `pause` (Pause) | What other apps do while Sonara speaks. Pause pauses media that Windows can control and resumes it. Duck lowers other apps. Off leaves them alone. They come back when Sonara stops, and on the next start if it was killed mid-sentence. On macOS Duck is greyed out (macOS has no per-app volume; a saved `duck` pauses instead), and Pause reaches Music, Spotify and the app in Now Playing (a video in a browser, Podcasts and others): macOS asks once whether Sonara may control Music or Spotify, Now Playing asks nothing |
 | Duck to | `duck_level` | 30 | 0 to 100 percent | The volume other apps keep while ducked. Shown only for Duck |
 
 ### Chimes and where files live

@@ -1,7 +1,8 @@
 //! Live checks of the macOS platform against this Mac. They register the
 //! user's real global hotkeys for a moment, ask a person to press one, or
 //! talk to the running media players (the first call to a player shows
-//! macOS's Automation prompt once), so they are `#[ignore]`: run them by
+//! macOS's Automation prompt once) or to the Now Playing app (a video in
+//! a browser; no prompt), so they are `#[ignore]`: run them by
 //! hand with
 //! `cargo build -p sonara-system --example mac_hotkeys` and then
 //! `cargo test -p sonara-system --test mac_live -- --ignored --nocapture`.
@@ -12,6 +13,7 @@
 #![cfg(target_os = "macos")]
 
 use sonara_system::mac;
+use sonara_system::mac_nowplaying::NowPlayingMedia;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -71,7 +73,10 @@ fn pauses_and_resumes_a_playing_player() {
         .into_iter()
         .filter(|s| s.is_playing() == Ok(true))
         .collect();
-    assert!(!playing.is_empty(), "start Music or Spotify first");
+    assert!(
+        !playing.is_empty(),
+        "start Music, Spotify or a video in a browser first"
+    );
     for s in &playing {
         s.pause().unwrap();
         assert_eq!(s.is_playing(), Ok(false));
@@ -81,4 +86,34 @@ fn pauses_and_resumes_a_playing_player() {
         s.play().unwrap();
         assert_eq!(s.is_playing(), Ok(true), "never left paused");
     }
+}
+
+#[test]
+#[ignore = "reads this Mac's Now Playing media (no command)"]
+fn reads_the_now_playing_app_through_osascript() {
+    let now = NowPlayingMedia::new()
+        .read()
+        .expect("MediaRemote through osascript");
+    println!("now playing: {now:?}");
+}
+
+/// Play a YouTube video in Chrome (or any app that shows in Now Playing)
+/// first: it is paused for a second, then resumed.
+#[test]
+#[ignore = "pauses this Mac's Now Playing media for a second"]
+fn pauses_and_resumes_the_now_playing_app() {
+    let media = NowPlayingMedia::new();
+    let sessions = media.sessions();
+    let s = sessions
+        .first()
+        .expect("play a video in a browser (not Music or Spotify) first");
+    println!("now playing: {:?}", s.app_id());
+    assert_eq!(s.is_playing(), Ok(true), "it must be playing");
+    s.pause().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(s.is_playing(), Ok(false), "paused");
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    s.play().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(s.is_playing(), Ok(true), "never left paused");
 }

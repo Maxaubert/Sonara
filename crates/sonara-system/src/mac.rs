@@ -1,6 +1,7 @@
 //! The macOS platform: Carbon global hotkeys (`RegisterEventHotKey`, no
 //! permission prompt), tap and hold from the hotkey's key-release event,
-//! media pause through AppleScript (Music and Spotify), and the session
+//! media pause through AppleScript (Music and Spotify) and through Now
+//! Playing (`mac_nowplaying`: a browser video, Podcasts and other apps), and the session
 //! end from SIGTERM and `NSWorkspaceWillPowerOffNotification`. Ducking is
 //! unavailable (`Platform::duck` is false): macOS has no per-app volume
 //! without an audio tap, so `duck` mode pauses media instead.
@@ -31,6 +32,7 @@
 //! routing, the timeout and the SIGTERM path without touching the user's.
 use crate::hotkeys::ERROR_HOTKEY_ALREADY_REGISTERED;
 use crate::keymap::{MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_WIN};
+use crate::mac_nowplaying::{NowPlayingMedia, Snapshot};
 use crate::platform::{
     AudioSessions, KeyState, KeyboardLayout, MediaSession, MediaSessions, OnSessionEnd, PResult,
     Platform, Registrar, TIMED_OUT,
@@ -50,7 +52,7 @@ pub fn platform() -> Platform {
         name: "macos",
         duck: false,
         audio: Arc::new(|| Box::new(NoDuck) as Box<dyn AudioSessions>),
-        media: Arc::new(|| Box::new(AppleScriptMedia) as Box<dyn MediaSessions>),
+        media: Arc::new(|| Box::new(MacMedia::new()) as Box<dyn MediaSessions>),
         registrar: Arc::new(|| registrar_with(Box::new(Carbon))),
         layout: Arc::new(NoAltGr),
         keys: Arc::new(Keys),
@@ -847,9 +849,12 @@ impl AudioSessions for NoDuck {
 /// first Automation permission prompt, must not hold the audio worker.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// The media apps paused, by bundle id: the scriptable players with a
-/// `player state`. Podcasts has no scripting dictionary (`sdef` fails), so
-/// it is not among them; browsers are not scriptable for media.
+/// The media apps paused through AppleScript, by bundle id: the scriptable
+/// players with a `player state`. Every one of them is paused when it
+/// plays, which Now Playing (one app at a time) cannot do, so Now Playing
+/// leaves them to this path. Podcasts has no scripting dictionary (`sdef`
+/// fails) and browsers are not scriptable for media: Now Playing reaches
+/// them (`mac_nowplaying`).
 pub const MEDIA_APPS: &[&str] = &["com.apple.Music", "com.spotify.client"];
 
 /// Run an `osascript` script (`javascript` selects JavaScript for
@@ -965,15 +970,64 @@ impl MediaSession for AppleScriptApp {
     }
 }
 
-struct AppleScriptMedia;
+/// The media sessions of a Mac: the running AppleScript players
+/// (`MEDIA_APPS`) and the Now Playing app (`mac_nowplaying`), listed in
+/// parallel (one `osascript` each, both bounded by `CALL_TIMEOUT`). Fails
+/// only when neither could be listed, so one path that is unavailable
+/// never stops the other.
+pub struct MacMedia {
+    now: NowPlayingMedia,
+}
 
-impl MediaSessions for AppleScriptMedia {
+impl MacMedia {
+    pub fn new() -> Self {
+        MacMedia {
+            now: NowPlayingMedia::new(),
+        }
+    }
+}
+
+impl Default for MacMedia {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MediaSessions for MacMedia {
     fn sessions(&self) -> PResult<Vec<Box<dyn MediaSession>>> {
-        Ok(running_media_apps()?
+        let (apps, now) = std::thread::scope(|s| {
+            let apps = s.spawn(running_media_apps);
+            let now = self.now.read();
+            let apps = apps
+                .join()
+                .unwrap_or_else(|_| Err("listing the media apps panicked".into()));
+            (apps, now)
+        });
+        merge_sessions(apps, now, &self.now)
+    }
+}
+
+/// The sessions of both paths; an error only when both failed.
+fn merge_sessions(
+    apps: PResult<Vec<String>>,
+    now: PResult<Option<Snapshot>>,
+    np: &NowPlayingMedia,
+) -> PResult<Vec<Box<dyn MediaSession>>> {
+    if let (Err(a), Err(n)) = (&apps, &now) {
+        return Err(format!("{a}; Now Playing: {n}"));
+    }
+    let mut out: Vec<Box<dyn MediaSession>> = match apps {
+        Ok(ids) => ids
             .into_iter()
             .map(|id| Box::new(AppleScriptApp(id)) as Box<dyn MediaSession>)
-            .collect())
-    }
+            .collect(),
+        Err(e) => {
+            eprintln!("sonara-system: [pause] cannot list Music and Spotify: {e}");
+            Vec::new()
+        }
+    };
+    out.extend(np.sessions_from(now));
+    Ok(out)
 }
 
 // ---- the session end ------------------------------------------------------
@@ -1170,6 +1224,57 @@ mod tests {
         let timed_out = Err(format!("{TIMED_OUT} after 2000 ms"));
         assert_eq!(playing_from(timed_out), Ok(false));
         assert_eq!(playing_from(Err("osascript: -1743".into())), Ok(false));
+    }
+
+    fn chrome() -> PResult<Option<Snapshot>> {
+        Ok(Some(Snapshot {
+            app: "com.google.Chrome".into(),
+            title: "A video".into(),
+            state: 1,
+            is_playing: true,
+        }))
+    }
+
+    fn no_run() -> NowPlayingMedia {
+        NowPlayingMedia::with(
+            std::sync::Arc::new(|_: &str| Err("not called".into())),
+            "",
+            MEDIA_APPS,
+        )
+    }
+
+    fn ids(s: &[Box<dyn MediaSession>]) -> Vec<String> {
+        s.iter().map(|s| s.app_id().unwrap()).collect()
+    }
+
+    #[test]
+    fn both_paths_are_listed_together() {
+        let np = no_run();
+        let s = merge_sessions(Ok(vec!["com.apple.Music".into()]), chrome(), &np).unwrap();
+        assert_eq!(ids(&s), ["com.apple.Music", "com.google.Chrome"]);
+    }
+
+    #[test]
+    fn now_playing_unavailable_falls_back_to_applescript() {
+        let np = no_run();
+        let s = merge_sessions(
+            Ok(vec!["com.spotify.client".into()]),
+            Err("MediaRemote did not load".into()),
+            &np,
+        )
+        .unwrap();
+        assert_eq!(ids(&s), ["com.spotify.client"]);
+        let s = merge_sessions(Err(format!("{TIMED_OUT} after 2000 ms")), chrome(), &np).unwrap();
+        assert_eq!(ids(&s), ["com.google.Chrome"]);
+    }
+
+    #[test]
+    fn listing_fails_only_when_both_paths_fail() {
+        let np = no_run();
+        let e = merge_sessions(Err("a".into()), Err("b".into()), &np)
+            .err()
+            .unwrap();
+        assert!(e.contains('a') && e.contains('b'), "{e}");
     }
 
     #[test]
