@@ -73,6 +73,30 @@ jobs:
       - name: Notices up to date
         run: python packaging/notices/gen_notices.py --check
 
+  # The macOS port (advisory until the first macOS release; not in
+  # REQUIRED_CHECKS yet): the workspace and conformance on Apple Silicon.
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo nextest run --workspace --profile ci
+      - run: cargo test --workspace --doc
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: cargo build -p sonarad -p sonara-hook -p sonara-cli
+      - run: pip install pytest
+      - run: python -m pytest conformance -q --ignore=conformance/plugin
+
   # Protocol v1 conformance: black-box tests against the built debug
   # binaries (fake engine, silent output; no audio device or voices needed).
   # Its own job, parallel to rust (#256): it builds only the three
