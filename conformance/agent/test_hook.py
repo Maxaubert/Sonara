@@ -98,10 +98,10 @@ def test_the_hook_asks_for_system_and_keeps_the_runtime(hook_exe, rt):
 
 
 def test_the_hook_starts_the_runtime_when_none_runs(hook_exe, tmp_path):
-    # #197: no runtime yet -> the hook starts sonarad.exe from its own
+    # #197: no runtime yet -> the hook starts sonarad from its own
     # folder (the fake engine and system through SONARA_RUNTIME_ARGS), and
     # the event reaches it.
-    exe = hook_exe.parent / "sonarad.exe"
+    exe = hook_exe.parent / f"sonarad{harness.EXE}"
     if not exe.is_file():
         pytest.fail(f"{exe} not found: build sonarad next to sonara-hook")
     home = tmp_path / "home"

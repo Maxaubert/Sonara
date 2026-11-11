@@ -75,6 +75,7 @@ pub struct Report {
 const OWN: &[&str] = &[
     "runtime",
     "runtime.json",
+    "sonarad.lock",
     "state",
     "models",
     "logs",
@@ -343,6 +344,7 @@ mod tests {
             "keymap.json",
             "runtime.json",
             "session_prefs.json",
+            "sonarad.lock",
         ] {
             std::fs::write(home.join(f), b"{}").unwrap();
         }
@@ -351,6 +353,7 @@ mod tests {
         assert!(r.failed.is_empty(), "{:?}", r.failed);
         assert!(!root.exists() && !home.join("models").exists() && !home.join("state").exists());
         assert!(!home.join("runtime.json").exists());
+        assert!(!home.join("sonarad.lock").exists(), "the macOS lock file");
         for kept in [
             "config.json",
             "keymap.json",

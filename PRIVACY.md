@@ -163,6 +163,9 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
 
 Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 (`C:\Users\<you>\AppData\Local\Sonara`). None of it is sent anywhere.
+On macOS (in development) the same files live under
+`~/Library/Application Support/Sonara`, created readable only by you; the paths below use `/`
+there instead of `\`.
 
 **The runtime**
 
@@ -188,6 +191,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 | File | What it holds |
 |---|---|
 | `runtime.json` | The running runtime's process id, local ports and access token, readable only by you (removed when it stops) |
+| `sonarad.lock` | macOS only: empty, readable only by you; the runtime locks it so only one runs per home |
 | `stopped` | Present while Sonara is stopped (`sonara stop`, `/sonara:uninstall`): the hooks then do not start or install it |
 | `state\duck_state.json` | Which apps Sonara lowered and their original volume, so they are restored after a crash |
 | `state\pause_state.json` | Which media apps Sonara paused, so they are resumed after a crash |

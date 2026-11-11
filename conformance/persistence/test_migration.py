@@ -9,6 +9,7 @@ temporary ``USERPROFILE`` too, so no test can read this PC's real one."""
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -176,6 +177,7 @@ def test_nothing_to_migrate_writes_nothing(start, tmp_path, profile):
     assert not (rt.home / "config.json").exists()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the Python plugin ran on Windows only")
 def test_the_default_home_imports_from_the_profile(start, tmp_path, profile):
     """What an end user gets: no flag, the default %LOCALAPPDATA%\\Sonara home
     (passed with --home as the SDK clients do) and the plugin's folder in
@@ -196,3 +198,18 @@ def test_the_default_home_imports_from_the_profile(start, tmp_path, profile):
     assert get(c, "rate") == 250
     cfg = json.loads((home / "config.json").read_text(encoding="utf-8"))
     assert cfg["_migrated"]["from"] == str(tmp_path / "profile" / ".sonara")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the macOS default home")
+def test_the_default_home_imports_nothing_on_macos(start, tmp_path, profile):
+    """The Python plugin never ran on macOS: the default home
+    (``~/Library/Application Support/Sonara``, ``HOME`` a temporary folder
+    here) ignores a ``~/.sonara`` folder. The lock is per home, so a real
+    runtime on this Mac does not collide."""
+    home = tmp_path / "profile" / "Library" / "Application Support" / "Sonara"
+    plugin_tree(tmp_path / "profile")
+    env = {**profile, "SONARA_HOME": ""}
+    rt = start("--home", str(home), home=home, env=env)
+    c = rt.tcp()
+    assert get(c, "rate") == 250
+    assert not (home / "config.json").exists(), "nothing was migrated"

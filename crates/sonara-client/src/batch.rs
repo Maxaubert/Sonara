@@ -194,7 +194,7 @@ mod tests {
 
     // #56: a stale runtime.json whose port another process now holds gets
     // nothing: not the hello with the token, not the messages.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn nothing_is_sent_to_a_process_squatting_the_port_of_a_dead_runtime() {
         use crate::home::RUNTIME_FILE;

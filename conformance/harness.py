@@ -1,19 +1,22 @@
 """Black-box harness for protocol v1 conformance (stdlib only).
 
-Starts a built ``sonarad.exe`` with a temporary home, the fake engine, the
+Starts a built ``sonarad`` with a temporary home, the fake engine, the
 silent timed output, the fake ``system`` platform (fake apps, media and
 hotkeys in ``<home>/fake-system.json``, so no test touches this PC's audio
 or hotkeys) and fake engine keys (``<home>/fake-keys.json``, never the
 Windows Credential Manager), and talks to it over TCP JSON lines and HTTP/SSE exactly as a
 client would. The binary is ``$SONARAD`` if set, else the
-newest of ``target/release/sonarad.exe`` and ``target/debug/sonarad.exe``.
+newest of ``target/release/sonarad`` and ``target/debug/sonarad`` (with
+``.exe`` on Windows).
 """
 from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -22,6 +25,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TIMEOUT = 10.0
 CREATE_NO_WINDOW = 0x08000000
+WINDOWS = sys.platform == "win32"
+# ``.exe`` on Windows, nothing elsewhere.
+EXE = ".exe" if WINDOWS else ""
+# No console window for a child on Windows; nothing to ask for elsewhere.
+NO_WINDOW = {"creationflags": CREATE_NO_WINDOW} if WINDOWS else {}
 
 # The fake engine speaks 10 ms per character at rate 200, so a chunk of
 # LONG_SENTENCE lasts about 3 s and SHORT_SENTENCE about 0.2 s.
@@ -38,7 +46,7 @@ def find_sonarad() -> Path | None:
     env = os.environ.get("SONARAD")
     if env:
         return Path(env)
-    found = [REPO / "target" / p / "sonarad.exe" for p in ("release", "debug")]
+    found = [REPO / "target" / p / f"sonarad{EXE}" for p in ("release", "debug")]
     found = [p for p in found if p.is_file()]
     if not found:
         return None
@@ -46,11 +54,11 @@ def find_sonarad() -> Path | None:
 
 
 def find_hook() -> Path | None:
-    """``$SONARA_HOOK``, else the newest built ``sonara-hook.exe``."""
+    """``$SONARA_HOOK``, else the newest built ``sonara-hook``."""
     env = os.environ.get("SONARA_HOOK")
     if env:
         return Path(env)
-    found = [REPO / "target" / p / "sonara-hook.exe" for p in ("release", "debug")]
+    found = [REPO / "target" / p / f"sonara-hook{EXE}" for p in ("release", "debug")]
     found = [p for p in found if p.is_file()]
     if not found:
         return None
@@ -58,7 +66,7 @@ def find_hook() -> Path | None:
 
 
 class Hook:
-    """One ``sonara-hook.exe <event>`` process, as Claude Code runs it: the
+    """One ``sonara-hook <event>`` process, as Claude Code runs it: the
     payload on stdin. Its start time (``t``) is taken when it starts, so a
     test can hold the payload back to deliver it late."""
 
@@ -81,7 +89,7 @@ class Hook:
             # they must reach end of file when the hook ends.
             stdout=subprocess.PIPE if pipes else subprocess.DEVNULL,
             stderr=subprocess.PIPE if pipes else subprocess.DEVNULL,
-            creationflags=CREATE_NO_WINDOW,
+            **NO_WINDOW,
         )
 
     def send(self, payload: dict) -> int:
@@ -118,7 +126,7 @@ class Runtime:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=self._stderr,
-            creationflags=CREATE_NO_WINDOW,
+            **NO_WINDOW,
         )
         self.info: dict = {}
         if wait:
@@ -219,14 +227,35 @@ class Attached(Runtime):
         return _pid_alive(self.info["pid"])
 
     def kill(self) -> None:
-        subprocess.run(["taskkill", "/F", "/PID", str(self.info["pid"])],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       creationflags=CREATE_NO_WINDOW, check=False)
+        if WINDOWS:
+            subprocess.run(["taskkill", "/F", "/PID", str(self.info["pid"])],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=False, **NO_WINDOW)
+        else:
+            try:
+                os.kill(self.info["pid"], signal.SIGKILL)
+            except OSError:
+                pass
         wait_until(lambda: not self.alive())
 
 
 def _pid_alive(pid: int) -> bool:
-    """True while the process runs (OpenProcess; os.kill would end it)."""
+    """True while the process runs (OpenProcess on Windows, where os.kill
+    would end it; signal 0 elsewhere). A process that was not started by
+    this test is not reaped, so a zombie counts as ended."""
+    if not WINDOWS:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        try:
+            out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                                 capture_output=True, text=True, check=False).stdout
+        except OSError:
+            return True
+        return bool(out.strip()) and not out.strip().startswith("Z")
     import ctypes
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     h = k32.OpenProcess(0x1000 | 0x00100000, False, pid)  # QUERY_LIMITED | SYNCHRONIZE

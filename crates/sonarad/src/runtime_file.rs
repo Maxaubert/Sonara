@@ -45,7 +45,13 @@ pub fn write(
 ) -> Result<(), String> {
     let tmp = temp_path(path, info.pid);
     let result = (|| {
-        let mut f = std::fs::File::create(&tmp)
+        let mut open = std::fs::OpenOptions::new();
+        open.write(true).create(true).truncate(true);
+        // On unix the file is user-only (0600) from the moment it exists.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+        let mut f = open
+            .open(&tmp)
             .map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
         // Restrict before the token is written.
         restrict(&tmp)?;
@@ -191,6 +197,25 @@ mod tests {
         let (aces, protected) = crate::instance::dacl_summary(&path).unwrap();
         assert_eq!(aces, 1, "one entry: the user");
         assert!(protected, "no inherited entries");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_file_is_user_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("mode");
+        let path = dir.join("runtime.json");
+        let uid = crate::instance::user_sid().unwrap();
+        // Already user-only before `restrict` runs and the token is written.
+        write(&path, &info(1), |p| {
+            let mode = std::fs::metadata(p).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "the temp file: {mode:o}");
+            crate::instance::restrict_to_user(p, &uid)
+        })
+        .unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

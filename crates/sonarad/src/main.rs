@@ -235,7 +235,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         Some(home::key(&home))
     };
     let name = instance::mutex_name(&sid, key.as_deref());
-    let instance = match instance::acquire(&name) {
+    let instance = match instance::acquire(&name, &home.dir) {
         Ok(i) => i,
         Err(AcquireError::AlreadyRunning) => {
             let pid = runtime_file::read_pid(&home.runtime_json())
@@ -363,6 +363,28 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     result.map_err(fail)
 }
 
+/// A signal to exit on: Ctrl+C, and on unix also SIGTERM (`kill`, a
+/// logout or shutdown) and SIGHUP, so speech stops, other apps are put back
+/// and `runtime.json` is removed as on any clean exit.
+async fn exit_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let (Ok(mut term), Ok(mut hup)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        ) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+                _ = hup.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run(
     args: &args::Args,
@@ -478,7 +500,7 @@ async fn run(
 
     let why = tokio::select! {
         why = life.wait_exit() => why,
-        _ = tokio::signal::ctrl_c() => {
+        _ = exit_signal() => {
             life.request_exit(ExitReason::Signal);
             ExitReason::Signal
         }
