@@ -13,6 +13,18 @@ import sys
 
 import pytest
 
+# Combos as the runtime labels them: the macOS names and order on macOS.
+MAC_LABELS = {"Win+Alt+": "Option+Cmd+", "Ctrl+Alt+": "Ctrl+Option+"}
+
+
+def label(windows: str) -> str:
+    if sys.platform != "darwin":
+        return windows
+    for win, mac in MAC_LABELS.items():
+        if windows.startswith(win):
+            return mac + windows[len(win):]
+    return windows
+
 PLUGIN_CONFIG = {
     "_format": 2,
     "voice": "af_sarah",
@@ -101,11 +113,11 @@ def test_the_plugin_settings_are_imported(start, tmp_path, profile):
     assert "settings_port" not in cfg and "cue_voice" not in cfg
     # Hotkeys under the runtime's names.
     by_action = {b["action"]: b for b in get(c, "hotkeys")["bindings"]}
-    assert by_action["restart"]["combo"] == "Win+Alt+Home"
-    assert by_action["next_channel"]["combo"] == "Ctrl+Alt+N"
-    assert by_action["pause"]["combo"] == "Ctrl+Alt+S"
+    assert by_action["restart"]["combo"] == label("Win+Alt+Home")
+    assert by_action["next_channel"]["combo"] == label("Ctrl+Alt+N")
+    assert by_action["pause"]["combo"] == label("Ctrl+Alt+S")
     assert by_action["flush"]["key"] is None
-    assert by_action["mute"]["combo"] == "Ctrl+Alt+M", "not in the plugin's file: the default"
+    assert by_action["mute"]["combo"] == label("Ctrl+Alt+M"), "not in the plugin's file: the default"
     # Session preferences; a Chatterbox voice speaks as Heart.
     rows = {r["channel"]: r for r in get(c, "channel_prefs")}
     assert rows["sess-1"]["label"] == "Build" and rows["sess-1"]["muted"] is True
@@ -155,8 +167,8 @@ def test_a_home_with_a_keymap_keeps_it(start, tmp_path, profile):
     rt = start("--migrate-from", str(legacy), home=home, env=profile)
     c = rt.tcp(extensions=["system"])
     by_action = {b["action"]: b for b in get(c, "hotkeys")["bindings"]}
-    assert by_action["mute"]["combo"] == "Ctrl+Alt+K"
-    assert by_action["flush"]["combo"] == "Ctrl+Alt+Down"
+    assert by_action["mute"]["combo"] == label("Ctrl+Alt+K")
+    assert by_action["flush"]["combo"] == label("Ctrl+Alt+Down")
     assert get(c, "rate") == 250, "the settings are still imported"
 
 
