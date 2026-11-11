@@ -213,7 +213,10 @@ pub fn list_lines(reply: &Value) -> Vec<String> {
     let empty = Vec::new();
     let engines = reply["engines"].as_array().unwrap_or(&empty);
     if engines.is_empty() {
-        out.push("No engines added. Built in: Kokoro and the Windows voices.".to_string());
+        out.push(format!(
+            "No engines added. Built in: Kokoro and {}.",
+            crate::doctor::system_voices()
+        ));
     }
     for e in engines {
         let key = match (

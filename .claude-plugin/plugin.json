@@ -1,8 +1,8 @@
 {
   "name": "sonara",
   "displayName": "Sonara",
-  "version": "0.37.2",
-  "description": "Text-to-speech for Claude Code on Windows.",
+  "version": "0.38.0",
+  "description": "Text-to-speech for Claude Code on Windows and macOS.",
   "author": {
     "name": "Max Aubert",
     "email": "aubert@post.com"

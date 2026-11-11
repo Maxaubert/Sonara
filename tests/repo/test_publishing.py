@@ -63,8 +63,15 @@ def test_a_missing_file_is_named():
 
 def test_publishing_uses_no_registry_tokens():
     text = RELEASE.read_text(encoding="utf-8")
-    for token in ("NPM_TOKEN", "PYPI_TOKEN", "NODE_AUTH_TOKEN", "TWINE_PASSWORD", "secrets."):
+    for token in ("NPM_TOKEN", "PYPI_TOKEN", "NODE_AUTH_TOKEN", "TWINE_PASSWORD"):
         assert token not in text, token
+    # The only secrets are the Apple signing ones, in the macOS build job.
+    used = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", text))
+    assert used and all(name.startswith("APPLE_") for name in used), used
+    jobs = _release_jobs()
+    for job, spec in jobs.items():
+        if job != "build-macos":
+            assert "secrets." not in json.dumps(spec), job
 
 
 def test_each_registry_publishes_by_oidc_from_its_environment_behind_its_switch():

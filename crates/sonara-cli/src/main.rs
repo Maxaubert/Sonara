@@ -162,10 +162,30 @@ fn open_url(url: &str) -> bool {
     if env("SONARA_NO_BROWSER").is_some_and(|v| !v.is_empty()) {
         return false;
     }
-    std::process::Command::new("rundll32.exe")
-        .args(["url.dll,FileProtocolHandler", url])
+    let (program, args) = browser_command(url);
+    std::process::Command::new(program)
+        .args(args)
         .spawn()
         .is_ok()
+}
+
+/// The program (and its arguments) that opens `url` in the default
+/// browser on this platform (`browser_command_for`).
+fn browser_command(url: &str) -> (&'static str, Vec<String>) {
+    browser_command_for(url, cfg!(target_os = "macos"))
+}
+
+/// `browser_command` as on macOS (`mac`: `/usr/bin/open`, by its full path
+/// so no `open` earlier on PATH runs) or Windows (`rundll32`).
+fn browser_command_for(url: &str, mac: bool) -> (&'static str, Vec<String>) {
+    if mac {
+        ("/usr/bin/open", vec![url.to_string()])
+    } else {
+        (
+            "rundll32.exe",
+            vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
+        )
+    }
 }
 
 fn settings(paths: &Paths) -> Result<(), String> {
@@ -360,9 +380,9 @@ fn doctor(paths: &Paths) -> ExitCode {
         ),
         file_row(
             &paths.exe_dir,
-            "onnxruntime.dll",
+            doctor::onnx_runtime().0,
             Status::Warn,
-            "Kokoro cannot run; Windows voices only",
+            doctor::onnx_runtime().1,
         ),
     ];
     let stopped = paths.home.join(STOPPED).exists();
@@ -519,6 +539,26 @@ fn uninstall(paths: &Paths, exe: &Path, keep: &[Keep]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_browser_opens_through_the_platforms_own_opener() {
+        let url = "http://127.0.0.1:5000/settings?token=abc123";
+        assert_eq!(
+            browser_command_for(url, true),
+            ("/usr/bin/open", vec![url.to_string()])
+        );
+        assert_eq!(
+            browser_command_for(url, false),
+            (
+                "rundll32.exe",
+                vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()]
+            )
+        );
+        assert_eq!(
+            browser_command(url),
+            browser_command_for(url, cfg!(target_os = "macos"))
+        );
+    }
 
     #[test]
     fn an_opened_settings_page_is_reported_without_its_token() {

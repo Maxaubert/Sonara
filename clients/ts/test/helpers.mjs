@@ -74,11 +74,12 @@ export async function startFake(home, opts = {}) {
   };
 }
 
-/** `$SONARAD`, else the newest of target/{release,debug}/sonarad.exe, else null. */
+/** `$SONARAD`, else the newest of target/{release,debug}/sonarad[.exe], else null. */
 export function findSonarad() {
   if (process.env.SONARAD) return process.env.SONARAD;
+  const exe = process.platform === "win32" ? "sonarad.exe" : "sonarad";
   const found = ["release", "debug"]
-    .map((p) => join(REPO, "target", p, "sonarad.exe"))
+    .map((p) => join(REPO, "target", p, exe))
     .filter((p) => existsSync(p));
   if (!found.length) return null;
   return found.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];

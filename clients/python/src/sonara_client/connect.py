@@ -38,8 +38,8 @@ def connect(
     """Connect to the shared Sonara runtime.
 
     1. Read ``runtime.json`` in the home (``home``, else ``SONARA_HOME``,
-       else ``%LOCALAPPDATA%\\Sonara``); when its pid is alive, connect and
-       send ``hello``.
+       else ``%LOCALAPPDATA%\\Sonara``, on macOS ``~/Library/Application
+       Support/Sonara``); when its pid is alive, connect and send ``hello``.
     2. Use it when it speaks protocol 1 and offers everything in ``require``.
     3. Otherwise (with ``autostart``), start ``runtime_path --home <home>``
        (default: ``SONARA_RUNTIME``), wait up to ``start_timeout`` seconds

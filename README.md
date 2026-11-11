@@ -3,20 +3,21 @@
 
   # Sonara
 
-  **A speech runtime for Windows apps.**<br>
+  **A speech runtime for Windows and macOS apps.**<br>
   Offline local voices and cloud engines behind one API, with SDKs for Node, Python and React.
 
   [![CI](https://github.com/Maxaubert/Sonara/actions/workflows/ci.yml/badge.svg)](https://github.com/Maxaubert/Sonara/actions/workflows/ci.yml)
   [![Release](https://img.shields.io/github/v/release/Maxaubert/Sonara?color=5B4BDB)](https://github.com/Maxaubert/Sonara/releases)
   [![License: MIT](https://img.shields.io/badge/license-MIT-5B4BDB)](LICENSE)
   ![Windows 10/11](https://img.shields.io/badge/Windows_10%2F11-0078D6?logo=windows&logoColor=white)
+  ![macOS 14+](https://img.shields.io/badge/macOS_14%2B_(Apple_silicon)-000000?logo=apple&logoColor=white)
 
 </div>
 
 ---
 
-Sonara is a text-to-speech runtime (sonarad.exe) that any Windows app can bundle or talk to over a
-local protocol. It owns the voice: Kokoro neural voices offline, Windows voices, or cloud and local
+Sonara is a text-to-speech runtime (sonarad) that any Windows or macOS app can bundle or talk to over a
+local protocol. It owns the voice: Kokoro neural voices offline, Windows or macOS voices, or cloud and local
 engines you add, with queues, global hotkeys, audio ducking and several clients sharing one
 instance. SDKs for Node and Python and a React player sit on top (see [Bundle Sonara in your app](docs/bundling.md)).
 
@@ -25,8 +26,8 @@ plans, multiple-choice questions and permission prompts. A distinct sound plays 
 needs you, you answer by number, and hotkeys control the voice from any window.
 
 > [!NOTE]
-> This is the Windows line of Sonara, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari)
-> and developed independently. It runs on Windows only.
+> This line of Sonara was forked from [nimkimi/sonari](https://github.com/nimkimi/sonari)
+> and developed independently. It runs on Windows and on macOS (Apple silicon).
 
 [Install](#install) · [Hotkeys](#hotkeys) · [Settings](docs/user/settings.md) · [Troubleshooting](docs/user/troubleshooting.md) · [Privacy](PRIVACY.md) · [Docs](#documentation)
 
@@ -34,8 +35,9 @@ needs you, you answer by number, and hotkeys control the voice from any window.
 
 1. In Claude Code run `/plugin marketplace add Maxaubert/Sonara`, then `/plugin install sonara@sonara`.
 2. Restart Claude Code. The runtime installs itself on the first hook.
-3. Send a prompt. Sonara reads the reply (a Windows voice at first, Kokoro once its model has downloaded).
-4. Keys: **Ctrl+Alt+Up** back or restart, **Ctrl+Alt+Down** on or flush, **Ctrl+Alt+M** mute, **Ctrl+Alt+P** next session.
+3. Send a prompt. Sonara reads the reply (a Windows or macOS voice at first, Kokoro once its model has downloaded).
+4. Keys: **Ctrl+Alt+Up** back or restart, **Ctrl+Alt+Down** on or flush, **Ctrl+Alt+M** mute, **Ctrl+Alt+P** next session
+   (on macOS **Ctrl+Option** in place of Ctrl+Alt).
 5. Something wrong? Run `/sonara:doctor`.
 
 ## Features
@@ -62,9 +64,9 @@ needs you, you answer by number, and hotkeys control the voice from any window.
 
 ## Requirements
 
-- Windows 10 or 11 (x64).
+- Windows 10 or 11 (x64), or macOS 14 or later on Apple silicon.
 - Claude Code with plugin support. On Windows Claude Code needs Git for Windows; Sonara's hooks
-  run through its Git Bash too.
+  run through its Git Bash too. On macOS the system's own bash runs them.
 - An internet connection on first use, for the one-time downloads below. Nothing else: no
   Python, no installer, no administrator rights.
 
@@ -91,6 +93,14 @@ missing and installs it in the background, without holding up Claude Code:
 
 Speech starts with the next event, usually a few seconds later. `/sonara:doctor` shows the
 progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
+
+**On macOS** the same steps install `sonara-runtime-macos-arm64-<version>.tar.gz` into
+`~/Library/Application Support/Sonara/runtime/<version>/`, after checking its SHA-256 and the
+code signature of every program (it must verify and come from an Apple-issued Developer ID;
+the programs are notarized by Apple). The macOS voices speak until
+Kokoro is ready. macOS asks once whether Sonara may control Music or Spotify (to pause them while
+it speaks); ducking other apps is not available on macOS. Details:
+[Getting started on macOS](docs/user/getting-started.md#on-macos).
 
 **Defaults**
 
@@ -130,8 +140,9 @@ people say them, and you can add your own words under **Pronunciations** on the 
 
 ## Hotkeys
 
-The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotkeys tab. A hotkey
-must include Ctrl, Alt or Win.
+The default chord is **Ctrl+Alt** (on macOS **Ctrl+Option**; VoiceOver users rebind with Cmd).
+Rebind any action on the settings page's Hotkeys tab. A hotkey must include Ctrl, Alt or Win
+(on macOS Ctrl, Option or Cmd).
 
 | Hotkey | Tap | Hold half a second |
 |---|---|---|
@@ -167,7 +178,7 @@ Setup, rates, send modes, keys and the CLI: [docs/user/voices-and-engines.md](do
 | `/sonara:uninstall` | Remove Sonara, keeping what you choose (see [Uninstall](#uninstall)) |
 
 The slash commands run `sonara.exe` from the runtime folder through `bin/sonara`. You can also
-call it from Git Bash: `bash <plugin folder>/bin/sonara <command>`.
+call it from Git Bash (on macOS any terminal): `bash <plugin folder>/bin/sonara <command>`.
 
 | CLI command | What it does |
 |---|---|
@@ -181,7 +192,7 @@ call it from Git Bash: `bash <plugin folder>/bin/sonara <command>`.
 
 | Environment variable | Effect |
 |---|---|
-| `SONARA_HOME` | The home folder (default `%LOCALAPPDATA%\Sonara`) |
+| `SONARA_HOME` | The home folder (default `%LOCALAPPDATA%\Sonara`, on macOS `~/Library/Application Support/Sonara`) |
 | `SONARA_NO_BROWSER` | Print the settings URL only, do not open a browser |
 | `SONARA_RUNTIME_ARGS` | Extra arguments for `sonarad` |
 
@@ -223,7 +234,8 @@ Details, and every file Sonara keeps: [PRIVACY.md](PRIVACY.md).
 
 ## Use Sonara in your own app
 
-Apps can ship the Sonara runtime and speak through it (Windows x64 only). Each release publishes
+Apps can ship the Sonara runtime and speak through it (Windows x64; on macOS from the release
+tar.gz, see [docs/bundling.md](docs/bundling.md)). Each release publishes
 the SDKs with the same version:
 
 ```sh

@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -55,6 +56,9 @@ class Fake:
             [sys.executable, str(HERE / "fake_runtime.py"), json.dumps({"home": str(home), **opts})],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        # Reaped as soon as it exits, as a runtime started by someone else
+        # would be: pid_alive reaps only the runtimes the SDK started.
+        threading.Thread(target=self.proc.wait, daemon=True).start()
         ok = wait_until(lambda: (read_json(home / "runtime.json") or {}).get("pid") == self.proc.pid, 10)
         assert ok, "the fake runtime wrote no runtime.json"
 
@@ -99,7 +103,8 @@ def find_sonarad():
     env = os.environ.get("SONARAD")
     if env:
         return Path(env)
-    found = [REPO / "target" / p / "sonarad.exe" for p in ("release", "debug")]
+    exe = "sonarad.exe" if sys.platform == "win32" else "sonarad"
+    found = [REPO / "target" / p / exe for p in ("release", "debug")]
     found = [p for p in found if p.is_file()]
     return max(found, key=lambda p: p.stat().st_mtime) if found else None
 

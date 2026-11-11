@@ -14,6 +14,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import threading
 import time
 import wave
@@ -44,17 +45,24 @@ def which_node() -> str:
     return node
 
 
+WINDOWS = sys.platform == "win32"
+# ``.exe`` on Windows, nothing on macOS.
+EXE = ".exe" if WINDOWS else ""
+# ONNX Runtime as it ships next to sonarad.
+ORT = "onnxruntime.dll" if WINDOWS else "libonnxruntime.dylib"
+
+
 def find_runtime() -> Optional[Path]:
-    """The release sonarad.exe (``SONARAD`` wins): the build that ships."""
+    """The release sonarad (``SONARAD`` wins): the build that ships."""
     env = os.environ.get("SONARAD")
     if env:
         return Path(env) if Path(env).is_file() else None
-    exe = REPO / "target" / "release" / "sonarad.exe"
+    exe = REPO / "target" / "release" / f"sonarad{EXE}"
     return exe if exe.is_file() else None
 
 
 def has_kokoro_dlls(runtime: Path) -> bool:
-    return (runtime.parent / "onnxruntime.dll").is_file()
+    return (runtime.parent / ORT).is_file()
 
 
 def kokoro_models() -> Optional[Path]:
@@ -248,7 +256,10 @@ def wait_runtime_gone(home: Path, timeout: float = 15) -> None:
     if rt.exists():
         try:
             pid = json.loads(rt.read_text(encoding="utf-8"))["pid"]
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+            if WINDOWS:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+            else:
+                os.kill(pid, 9)
         except (OSError, ValueError, KeyError):
             pass
 
@@ -339,15 +350,19 @@ def check_real_voice(report: dict, wav_dir: Path, engine: str) -> Wav:
 
 # ------------------------------------------------------------ release zip
 
-ZIP_FILES = ("sonarad.exe", "sonara-hook.exe", "sonara.exe", "onnxruntime.dll", "onnxruntime-LICENSE.txt",
-             "LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md")
+# The programs of the release archive (with ``.exe`` on Windows).
+ARCHIVE_EXES = tuple(f"{n}{EXE}" for n in ("sonarad", "sonara-hook", "sonara"))
+ZIP_FILES = (*ARCHIVE_EXES, ORT, "onnxruntime-LICENSE.txt", "LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md")
 
 
 def unpack_release(zip_path: Path, sums: Path, dest: Path) -> Path:
-    """Check ``zip_path`` against ``SHA256SUMS`` the way the plugin's
-    bootstrap does, unpack it into ``dest`` and return the folder that
-    holds ``sonarad.exe`` (the zip's one top folder)."""
+    """Check the release archive ``zip_path`` (the Windows zip or the macOS
+    tar.gz) against ``SHA256SUMS`` the way the plugin's bootstrap does,
+    unpack it into ``dest`` and return the folder that holds ``sonarad``
+    (the archive's one top folder). The tar.gz must keep the programs'
+    exec bits."""
     import hashlib
+    import tarfile
     import zipfile
 
     want = {}
@@ -356,11 +371,27 @@ def unpack_release(zip_path: Path, sums: Path, dest: Path) -> Path:
         want[name.strip()] = digest.strip()
     got = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     assert want.get(zip_path.name) == got, f"{zip_path.name}: SHA256SUMS says {want.get(zip_path.name)}, file is {got}"
-    with zipfile.ZipFile(zip_path) as z:
-        tops = {n.split("/")[0] for n in z.namelist()}
-        assert tops == {zip_path.stem}, f"the zip's top folders: {sorted(tops)}"
-        z.extractall(dest)
-    folder = dest / zip_path.stem
+    if zip_path.name.endswith(".tar.gz"):
+        stem = zip_path.name[: -len(".tar.gz")]
+        with tarfile.open(zip_path, "r:gz") as t:
+            members = t.getmembers()
+            tops = {m.name.split("/")[0] for m in members}
+            assert tops == {stem}, f"the archive's top folders: {sorted(tops)}"
+            assert all(m.isfile() or m.isdir() for m in members), "only files and folders"
+            if hasattr(tarfile, "data_filter"):
+                t.extractall(dest, filter="data")
+            else:
+                t.extractall(dest)
+    else:
+        stem = zip_path.stem
+        with zipfile.ZipFile(zip_path) as z:
+            tops = {n.split("/")[0] for n in z.namelist()}
+            assert tops == {stem}, f"the zip's top folders: {sorted(tops)}"
+            z.extractall(dest)
+    folder = dest / stem
     missing = [f for f in ZIP_FILES if not (folder / f).is_file()]
-    assert not missing, f"the zip lacks {missing}"
+    assert not missing, f"the archive lacks {missing}"
+    if not WINDOWS:
+        lost = [f for f in ARCHIVE_EXES if not os.access(folder / f, os.X_OK)]
+        assert not lost, f"not executable after unpacking: {lost}"
     return folder

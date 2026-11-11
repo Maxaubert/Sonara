@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from typing import Optional, Sequence
 
@@ -21,13 +22,22 @@ CREATE_NEW_PROCESS_GROUP = 0x00000200
 _started: list = []
 
 
-def resolve_home(home: Optional[str] = None, env=None) -> str:
-    """``home``, else ``SONARA_HOME``, else ``%LOCALAPPDATA%\\Sonara``."""
+def resolve_home(home: Optional[str] = None, env=None, platform: Optional[str] = None) -> str:
+    """``home``, else ``SONARA_HOME``, else the platform default:
+    ``%LOCALAPPDATA%\\Sonara`` on Windows, ``$HOME/Library/Application
+    Support/Sonara`` on macOS (``platform`` is a ``sys.platform`` value; the
+    runtime and the plugin's launchers use the same path)."""
     env = os.environ if env is None else env
+    platform = sys.platform if platform is None else platform
     if home:
         return str(home)
     if env.get("SONARA_HOME"):
         return env["SONARA_HOME"]
+    if platform == "darwin":
+        if env.get("HOME"):
+            # Joined with "/", as the runtime does: it is a POSIX path.
+            return env["HOME"].rstrip("/") + "/Library/Application Support/Sonara"
+        raise SonaraError(E_NOT_RUNNING, "no home folder: pass home, or set SONARA_HOME or HOME")
     if env.get("LOCALAPPDATA"):
         return os.path.join(env["LOCALAPPDATA"], "Sonara")
     raise SonaraError(E_NOT_RUNNING, "no home folder: pass home, or set SONARA_HOME or LOCALAPPDATA")
@@ -55,6 +65,16 @@ def pid_alive(pid: int) -> bool:
         return False
     if os.name == "nt":
         return _pid_alive_windows(pid)
+    # A runtime this SDK started and that has ended (it was taken over)
+    # stays a zombie until it is reaped, and signal 0 still finds a zombie:
+    # reap it through its Popen, so it counts as ended. Other children of
+    # the host are left alone: reaping them here would hide their exit code
+    # from the host's own Popen.
+    for proc in _started:
+        if proc.pid == pid:
+            if proc.poll() is not None:
+                return False
+            break
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

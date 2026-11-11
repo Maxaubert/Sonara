@@ -7,19 +7,29 @@
 #   version file (plugin manifests, bin/runtime-version, the SDKs) disagrees;
 #   ci.yml runs the same check on every PR as its dry run.
 # - REFUSES to run if release v<version> already exists: bump the version in the PR.
-# - Publishes v<version> with GitHub-generated notes and two assets:
-#   sonara-runtime-win-x64-<version>.zip (sonarad.exe, sonara-hook.exe and
-#   sonara.exe release builds with the CRT linked statically, onnxruntime.dll
-#   with its licence files, the VC++ runtime DLLs it imports, LICENSE,
-#   LICENSING.md, THIRD_PARTY_NOTICES.md) and SHA256SUMS.
+# - Builds one runtime archive per platform, in parallel:
+#   build-windows: sonara-runtime-win-x64-<version>.zip (sonarad.exe,
+#     sonara-hook.exe and sonara.exe release builds with the CRT linked
+#     statically, onnxruntime.dll with its licence files, the VC++ runtime
+#     DLLs it imports, LICENSE, LICENSING.md, THIRD_PARTY_NOTICES.md).
+#     Unsigned until SignPath enrolment.
+#   build-macos: sonara-runtime-macos-arm64-<version>.tar.gz (sonarad,
+#     sonara-hook, sonara and libonnxruntime.dylib, signed with the Developer
+#     ID Application certificate, hardened runtime, and notarized by Apple;
+#     packaging/sign_macos.py). It FAILS when the signing secrets are missing
+#     (setup: docs/bundling.md): a macOS release is never unsigned.
+#   The release job publishes v<version> with GitHub-generated notes, both
+#   archives and one SHA256SUMS listing both, and only when BOTH builds
+#   passed: one bin/runtime-version serves both platforms, so a release
+#   without one of them would break that platform's plugin.
 #   The Claude Code plugin ships from the repo itself (the marketplace in
 #   .claude-plugin/), and on first use its bin/sonara-hook-launch downloads
-#   the zip of the release named in bin/runtime-version and checks it against
-#   SHA256SUMS (#202). So the release must exist before users install or
-#   update the plugin: merge -> CI -> this workflow publishes v<version> ->
-#   users install or update. A plugin update whose release is missing stays
-#   silent (each hook retries the download every 5 minutes) until it is
-#   published. Unsigned until SignPath enrolment.
+#   the archive of the release named in bin/runtime-version and checks it
+#   against SHA256SUMS (#202; on macOS also the code signature). So the
+#   release must exist before users install or update the plugin: merge ->
+#   CI -> this workflow publishes v<version> -> users install or update. A
+#   plugin update whose release is missing stays silent (each hook retries
+#   the download every 5 minutes) until it is published.
 # - Publishes the SDKs (#279) by trusted publishing (OIDC, no tokens):
 #   sonara-client to PyPI, @sonara/client and @sonara/runtime-win32-x64 to
 #   npm (@sonara/player is private). Off until the repository variables
@@ -69,16 +79,23 @@ env:
   RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
-  release:
+  # Whether to release, and which version (refusing one that exists).
+  prepare:
     if: >-
       (github.event_name == 'workflow_dispatch' && !inputs.packages_only) ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
-    runs-on: windows-latest
-    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     outputs:
       released: ${{ steps.changes.outputs.release }}
+      version: ${{ steps.ver.outputs.version }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,88 +105,227 @@ jobs:
           fetch-depth: 0
       - name: Changes
         id: changes
-        shell: pwsh
         run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") { "release=true" >> $env:GITHUB_OUTPUT; exit 0 }
-          $base = git describe --tags --abbrev=0 --match 'v*' HEAD 2>$null
-          if ($LASTEXITCODE -ne 0 -or -not $base) { $base = "HEAD~1" }
-          $files = @(git diff --name-only $base HEAD)
-          if ($LASTEXITCODE -ne 0) { Write-Error "cannot list the changed files"; exit 1 }
-          $code = @($files | Where-Object { $_ -notmatch '\.md$' -and $_ -notmatch '^docs/' -and $_ -notmatch '^\.github/' })
-          if ($files.Count -gt 0 -and $code.Count -eq 0) {
-            Write-Output "Only docs or tooling changed since ${base}: no release."
-            "release=false" >> $env:GITHUB_OUTPUT
-          } else {
-            "release=true" >> $env:GITHUB_OUTPUT
-          }
-          exit 0
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "release=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          base=$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null) || base=""
+          [ -n "$base" ] || base="HEAD~1"
+          files=$(git diff --name-only "$base" HEAD) || { echo "::error::cannot list the changed files"; exit 1; }
+          code=$(printf '%s\n' "$files" | grep -v -E '\.md$|^docs/|^\.github/' | grep -c . || true)
+          if [ -n "$files" ] && [ "$code" = 0 ]; then
+            echo "Only docs or tooling changed since ${base}: no release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-python@v7
         if: steps.changes.outputs.release == 'true'
         with:
           python-version: "3.12"
-
       - name: Read version
         if: steps.changes.outputs.release == 'true'
         id: ver
-        shell: pwsh
         run: |
           # Cargo.toml [workspace.package]; exits 1 naming any version file
           # that disagrees (fix: python packaging/bump_version.py <version>).
-          $v = python packaging/bump_version.py --check
-          if ($LASTEXITCODE -ne 0 -or -not $v) { Write-Error "cannot read the release version from Cargo.toml, or a version file disagrees (see above)"; exit 1 }
-          if ($v -notmatch '^\d+\.\d+\.\d+$') { Write-Error "release version '$v' is not major.minor.patch"; exit 1 }
-          "version=$v" >> $env:GITHUB_OUTPUT
-
+          v=$(python packaging/bump_version.py --check) || { echo "::error::cannot read the release version from Cargo.toml, or a version file disagrees (see above)"; exit 1; }
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::release version '$v' is not major.minor.patch"; exit 1; fi
+          runtime=$(tr -d '\r\n' < bin/runtime-version)
+          if [ "$runtime" != "$v" ]; then echo "::error::bin/runtime-version is ${runtime}: the plugin would download another release"; exit 1; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Refuse to overwrite an existing release
         if: steps.changes.outputs.release == 'true'
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v${{ steps.ver.outputs.version }}"
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Error "Release $tag already exists. Bump the version with python packaging/bump_version.py <version> (patch for a fix, minor for a feature) and push again."
+          tag="v${{ steps.ver.outputs.version }}"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::error::Release $tag already exists. Bump the version with python packaging/bump_version.py <version> (patch for a fix, minor for a feature) and push again."
             exit 1
-          }
-          # gh exiting 1 (release absent) is the pass case, but the pwsh step
-          # wrapper propagates a lingering $LASTEXITCODE as the step result.
-          exit 0
+          fi
 
+  build-windows:
+    needs: prepare
+    if: needs.prepare.outputs.released == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.changes.outputs.release == 'true'
       - name: Build the runtime zip
-        if: steps.changes.outputs.release == 'true'
-        id: zip
         shell: pwsh
         run: |
           cargo build -p sonarad -p sonara-hook -p sonara-cli --release
           if ($LASTEXITCODE -ne 0) { exit 1 }
           # onnxruntime.dll (official CPU build, pinned SHA-256) and the VC++
           # runtime DLLs it imports, next to sonarad.exe.
-          python packaging/runtime_dlls.py stage target/release
+          python packaging/runtime_dlls.py --platform win-x64 stage target/release
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python packaging/notices/gen_notices.py --check
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          $zip = python packaging/release_zip.py --out dist
+          $zip = python packaging/release_zip.py --platform win-x64 --out dist
           if ($LASTEXITCODE -ne 0 -or -not $zip) { Write-Error "release_zip.py failed"; exit 1 }
-          $expected = "sonara-runtime-win-x64-${{ steps.ver.outputs.version }}.zip"
+          $expected = "sonara-runtime-win-x64-${{ needs.prepare.outputs.version }}.zip"
           if ((Split-Path $zip -Leaf) -ne $expected) { Write-Error "zip is $zip, expected $expected (Cargo.toml version drift)"; exit 1 }
-          $runtimeVersion = (Get-Content bin/runtime-version -Raw).Trim()
-          if ($runtimeVersion -ne "${{ steps.ver.outputs.version }}") { Write-Error "bin/runtime-version is ${runtimeVersion}: the plugin would download another release"; exit 1 }
-          $sums = Join-Path (Split-Path $zip -Parent) "SHA256SUMS"
-          if (-not (Test-Path $sums)) { Write-Error "release_zip.py wrote no SHA256SUMS"; exit 1 }
-          "path=$zip" >> $env:GITHUB_OUTPUT
-          "sums=$sums" >> $env:GITHUB_OUTPUT
+          if (-not (Test-Path dist/SHA256SUMS)) { Write-Error "release_zip.py wrote no SHA256SUMS"; exit 1 }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: runtime-win-x64
+          path: |
+            dist/sonara-runtime-win-x64-${{ needs.prepare.outputs.version }}.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
 
+  # Signed with the Developer ID Application certificate and notarized, or
+  # not released at all (user decision 2026-11-11). The secrets: docs/bundling.md.
+  build-macos:
+    needs: prepare
+    if: needs.prepare.outputs.released == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The oldest macOS the runtime runs on (plan decision 8).
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # First, before any build: no secrets, no macOS release (and so no release).
+      - name: Signing secrets are set
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: python packaging/sign_macos.py check-secrets
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: |
+          cargo build -p sonarad -p sonara-hook -p sonara-cli --release
+          # libonnxruntime.dylib (official osx-arm64 build, pinned SHA-256)
+          # and its licence files, next to sonarad.
+          python packaging/runtime_dlls.py --platform macos-arm64 stage target/release
+          python packaging/notices/gen_notices.py --check
+      - name: Import the signing certificate
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # Sets APPLE_SIGNING_IDENTITY and APPLE_SIGNING_KEYCHAIN for the next steps.
+        run: python packaging/sign_macos.py import-cert
+      - name: Sign (Developer ID, hardened runtime, timestamp)
+        run: python packaging/sign_macos.py sign target/release
+      - name: Notarize
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: python packaging/sign_macos.py notarize target/release
+      - name: Build the runtime archive
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          v="${{ needs.prepare.outputs.version }}"
+          tgz=$(python packaging/release_zip.py --platform macos-arm64 --out dist)
+          [ "$(basename "$tgz")" = "sonara-runtime-macos-arm64-$v.tar.gz" ] || { echo "::error::archive is $tgz, expected sonara-runtime-macos-arm64-$v.tar.gz (Cargo.toml version drift)"; exit 1; }
+          [ -f dist/SHA256SUMS ] || { echo "::error::release_zip.py wrote no SHA256SUMS"; exit 1; }
+          # What the plugin's bootstrap checks after the download: every
+          # signature in the archive verifies, with the exec bits kept.
+          mkdir -p "$RUNNER_TEMP/check"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/check"
+          for f in sonarad sonara-hook sonara libonnxruntime.dylib; do
+            p="$RUNNER_TEMP/check/sonara-runtime-macos-arm64-$v/$f"
+            [ -x "$p" ] || { echo "::error::$f is not executable in the archive"; exit 1; }
+            codesign --verify --strict --verbose=2 "$p"
+            codesign -dv "$p" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID" || { echo "::error::$f is not signed by the team"; exit 1; }
+            # The requirement the plugin's bootstrap checks (Developer ID).
+            codesign --verify --strict -R='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "WV7BY8CUM8"' "$p" || { echo "::error::$f fails the bootstrap's Developer ID requirement"; exit 1; }
+            codesign -dv "$p" 2>&1 | grep -q "flags=.*runtime" || { echo "::error::$f lacks the hardened runtime"; exit 1; }
+          done
+          # sonarad: Apple Events allowed (media pause), library validation on.
+          ent=$(codesign -d --entitlements - --xml "$RUNNER_TEMP/check/sonara-runtime-macos-arm64-$v/sonarad" 2>/dev/null)
+          echo "$ent" | grep -q "com.apple.security.automation.apple-events" || { echo "::error::sonarad lacks the apple-events entitlement"; exit 1; }
+          if echo "$ent" | grep -q "disable-library-validation"; then echo "::error::sonarad was signed with the ad-hoc entitlements"; exit 1; fi
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          if [ -n "$APPLE_SIGNING_KEYCHAIN" ]; then security delete-keychain "$APPLE_SIGNING_KEYCHAIN" || true; fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: runtime-macos-arm64
+          path: |
+            dist/sonara-runtime-macos-arm64-${{ needs.prepare.outputs.version }}.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  # Publishes only when both platform builds passed (the implicit success()
+  # wants every job in needs): one release serves both platforms.
+  release:
+    needs: [prepare, build-windows, build-macos]
+    if: needs.prepare.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      released: ${{ needs.prepare.outputs.released }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: runtime-win-x64
+          path: assets/win
+      - uses: actions/download-artifact@v8
+        with:
+          name: runtime-macos-arm64
+          path: assets/mac
       - name: Publish release
-        if: steps.changes.outputs.release == 'true'
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v${{ steps.ver.outputs.version }}"
-          gh release create $tag "${{ steps.zip.outputs.path }}" "${{ steps.zip.outputs.sums }}" --title $tag --generate-notes --target $env:RELEASE_SHA
+          v="${{ needs.prepare.outputs.version }}"
+          tag="v$v"
+          win="sonara-runtime-win-x64-$v.zip"
+          mac="sonara-runtime-macos-arm64-$v.tar.gz"
+          mkdir dist
+          for a in "assets/win/$win" "assets/mac/$mac"; do
+            [ -f "$a" ] || { echo "::error::$a is missing: a release needs both platform archives"; exit 1; }
+            cp "$a" dist/
+          done
+          # One SHA256SUMS for both, each hash checked against its asset.
+          python packaging/release_zip.py --merge assets/win/SHA256SUMS assets/mac/SHA256SUMS --out dist
+          for a in "$win" "$mac"; do
+            grep -q "  $a\$" dist/SHA256SUMS || { echo "::error::SHA256SUMS lists no $a"; exit 1; }
+          done
+          (cd dist && sha256sum -c SHA256SUMS)
+          gh release create "$tag" "dist/$win" "dist/$mac" dist/SHA256SUMS --title "$tag" --generate-notes --target "$RELEASE_SHA"
 
   # The SDK packages (#279), built from the release commit by
   # packaging/build_packages.py, the script ci.yml's clients job checks on

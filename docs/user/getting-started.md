@@ -6,8 +6,9 @@ Install Sonara, hear your first reply and learn what to expect in the first five
 
 | Need | Detail |
 |---|---|
-| Windows | 10 or 11, x64. Sonara is Windows only |
-| Claude Code | With plugin support. On Windows it needs Git for Windows, and Sonara's hooks run through its Git Bash |
+| Windows | 10 or 11, x64 |
+| or macOS | 14 (Sonoma) or later, on Apple silicon (M1 or newer). Intel Macs are not supported yet |
+| Claude Code | With plugin support. On Windows it needs Git for Windows, and Sonara's hooks run through its Git Bash. On macOS the system's own `bash` runs them: nothing to install |
 | Internet | Only on first use, for two one-time downloads (below) |
 | Not needed | Python, an installer, administrator rights |
 
@@ -36,6 +37,21 @@ Until the model is ready, a Windows voice reads. The voice switches to Kokoro by
 **The first prompt after installing may stay silent.** The first hook only starts the install and returns at once, so the next event is the first one that speaks, usually a few seconds later.
 
 Offline or blocked downloads: the hooks stay silent and try again after 5 minutes. Run `/sonara:start` to try at once.
+
+## On macOS
+
+Install the same way, with the same two commands. What differs:
+
+| | macOS |
+|---|---|
+| Download | `sonara-runtime-macos-arm64-<version>.tar.gz` from the same release, checked against the same `SHA256SUMS` |
+| Where | `~/Library/Application Support/Sonara/runtime/<version>/` (programs `sonarad`, `sonara-hook`, `sonara`), the model and your settings next to it in `~/Library/Application Support/Sonara/` |
+| Signature | The programs are signed with Sonara's Developer ID and notarized by Apple. The install checks that every signature verifies and was made with an Apple-issued Developer ID certificate (`codesign --verify --strict -R`), and installs nothing otherwise. It does not yet pin Sonara's own team ID. The log is `~/Library/Application Support/Sonara/logs/bootstrap.log` |
+| Voice while Kokoro downloads | The macOS voices (the `say` voices), not the Windows ones |
+| Hotkeys | **Ctrl+Option**+Up, Down, M, P (Option is the Alt key). VoiceOver uses Ctrl+Option too: if you use VoiceOver, rebind them with Cmd ([hotkeys.md](hotkeys.md#on-macos)) |
+| Permission prompts | No Accessibility or Input Monitoring prompt: the hotkeys are registered with the system. With *Pause* (the default), macOS asks once per app, the first time Sonara pauses it, whether Sonara may control **Music** or **Spotify** (an Automation prompt). Allow it, or Sonara leaves that app playing. You can change it later in System Settings, Privacy & Security, Automation |
+| Other apps' audio | Pause reaches Music and Spotify only (not browsers). **Duck is not available on macOS**: macOS has no per-app volume, so a saved Duck pauses instead ([settings.md](settings.md)) |
+| First steps | The table below holds, with Ctrl+Option in place of Ctrl+Alt and the macOS voices in place of a Windows voice |
 
 ## Your first 5 minutes
 
@@ -117,7 +133,7 @@ Whatever is not kept is removed: the runtime folder (`%LOCALAPPDATA%\Sonara\runt
 
 Before removing anything, Sonara stops and restores other apps' audio. If it cannot stop, nothing is removed. Afterwards Sonara stays off: the hooks do nothing until you run `/sonara:start`.
 
-To remove what you kept, delete `%LOCALAPPDATA%\Sonara` yourself. [PRIVACY.md](../../PRIVACY.md) lists every file in it. Setting `SONARA_HOME` moves this folder.
+To remove what you kept, delete `%LOCALAPPDATA%\Sonara` (on macOS `~/Library/Application Support/Sonara`) yourself. [PRIVACY.md](../../PRIVACY.md) lists every file in it. Setting `SONARA_HOME` moves this folder.
 
 ## See also
 

@@ -1,6 +1,7 @@
-"""End to end (#202): a release zip built by packaging/release_zip.py from
-the built executables, served as the GitHub release, installed by the first
-hook into a temporary LOCALAPPDATA, and then Claude Code hook payloads
+"""End to end (#202): a release archive built by packaging/release_zip.py
+from the built executables, served as the GitHub release, installed by the
+first hook into a temporary LOCALAPPDATA (on macOS HOME), and then Claude
+Code hook payloads
 through bin/sonara-hook-launch become speech in the runtime it started
 (fake engine, fake system)."""
 from __future__ import annotations
@@ -25,7 +26,7 @@ def test_the_first_hook_installs_the_release_and_later_hooks_speak(box, releases
 
     code, took = box.launch("SessionStart", {"session_id": SESSION, "cwd": r"C:\work\proj"})
     assert code == 0 and took < ph.QUICK
-    # The bootstrap installs the runtime and starts it (sonara.exe start).
+    # The bootstrap installs the runtime and starts it (sonara start).
     box.wait_for(lambda: box.runtime_info() is not None, what="the runtime to start")
     box.wait_bootstrap()
     for f in (*ph.EXES, "LICENSE", "THIRD_PARTY_NOTICES.md"):
@@ -33,7 +34,7 @@ def test_the_first_hook_installs_the_release_and_later_hooks_speak(box, releases
     info = box.runtime_info()
     assert info["version"] == ph.VERSION
 
-    rt = harness.Runtime.attach(box.dest / "sonarad.exe", box.home, info)
+    rt = harness.Runtime.attach(box.dest / ph.SONARAD, box.home, info)
     # The product defaults (#202) as they ship: prose waits for five chunks
     # or the end of the turn.
     listener = rt.tcp(extensions=["agent"])

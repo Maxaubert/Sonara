@@ -1,4 +1,4 @@
-"""sonara.exe (#202): the plugin's settings, doctor, start, stop and
+"""sonara (#202): the plugin's settings, doctor, start, stop and
 uninstall commands, against temporary homes and the fake engine."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import plugin_harness as ph
 @pytest.fixture
 def cli(box, exes):
     def run(*args, timeout=60.0):
-        return box.cli(exes / "sonara.exe", *args, timeout=timeout)
+        return box.cli(exes / ph.CLI, *args, timeout=timeout)
     return run
 
 
@@ -43,13 +43,21 @@ def test_doctor_reports_rows_and_never_fails_on_information(box, cli):
     assert re.search(r"\[ OK \] runtime: started now, version " + re.escape(ph.VERSION), text)
     assert "[ OK ] engine: fake, ready" in text
     assert "250 words per minute" in text, "the product default rate"
-    assert "[INFO] audio: media apps are paused" in text, "the product default audio mode"
-    assert re.search(r"\[ OK \] hotkeys: Ctrl\+Alt\+Up restart", text)
+    # The product default audio mode (pause), and the default hotkeys: on
+    # macOS the scriptable players only, and Ctrl+Option.
+    if ph.WINDOWS:
+        assert "[INFO] audio: media apps are paused" in text
+        assert re.search(r"\[ OK \] hotkeys: Ctrl\+Alt\+Up restart", text)
+    else:
+        assert "[INFO] audio: Music and Spotify are paused" in text
+        assert re.search(r"\[ OK \] hotkeys: Ctrl\+Option\+Up restart", text)
+        assert "VoiceOver" in text
     assert "[ OK ] hooks:" in text, "run from the plugin (CLAUDE_PLUGIN_ROOT)"
-    assert "[WARN] onnxruntime.dll" in text or "[ OK ] onnxruntime.dll" in text
+    assert f"[WARN] {ph.ORT}" in text or f"[ OK ] {ph.ORT}" in text
     assert "[FAIL]" not in text
 
 
+@pytest.mark.skipif(not ph.WINDOWS, reason="the Python Sonara was Windows only")
 def test_doctor_warns_about_the_python_sonara_left_behind(box, cli):
     (box.profile / ".sonara" / "app").mkdir(parents=True)
     p = cli("doctor")

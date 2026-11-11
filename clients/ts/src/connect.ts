@@ -11,12 +11,12 @@ export interface ConnectOptions {
   /** Your app's version (default: this package's version). */
   clientVersion?: string;
   /**
-   * The bundled `sonarad.exe`, started when no usable runtime is running.
+   * The bundled `sonarad.exe` (`sonarad` on macOS), started when no usable runtime is running.
    * Default: `SONARA_RUNTIME` from the environment. With
    * `@sonara/runtime-win32-x64`: `runtimePath()` from that package.
    */
   runtimePath?: string;
-  /** Home folder (default: `SONARA_HOME`, else `%LOCALAPPDATA%\Sonara`). */
+  /** Home folder (default: `SONARA_HOME`, else `%LOCALAPPDATA%\Sonara`; on macOS `~/Library/Application Support/Sonara`). */
   home?: string;
   /** Start the bundled runtime when none is usable (default true). */
   autostart?: boolean;

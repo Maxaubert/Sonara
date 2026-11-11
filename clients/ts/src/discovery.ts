@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { SonaraError } from "./errors.js";
 import type { RuntimeInfo } from "./types.js";
 
@@ -8,10 +8,23 @@ import type { RuntimeInfo } from "./types.js";
 const EXIT_ALREADY_RUNNING = 3;
 const POLL_MS = 50;
 
-/** The home folder: `home`, else `SONARA_HOME`, else `%LOCALAPPDATA%\Sonara`. */
-export function resolveHome(home?: string, env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * The home folder: `home`, else `SONARA_HOME`, else the platform default:
+ * `%LOCALAPPDATA%\Sonara` on Windows, `$HOME/Library/Application Support/Sonara`
+ * on macOS (the runtime and the plugin's launchers use the same path).
+ */
+export function resolveHome(
+  home?: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
   if (home) return home;
   if (env.SONARA_HOME) return env.SONARA_HOME;
+  if (platform === "darwin") {
+    // posix: a macOS path, whatever the host (tests run it on Windows too).
+    if (env.HOME) return posix.join(env.HOME, "Library", "Application Support", "Sonara");
+    throw new SonaraError("E_NOT_RUNNING", "no home folder: pass home, or set SONARA_HOME or HOME");
+  }
   if (env.LOCALAPPDATA) return join(env.LOCALAPPDATA, "Sonara");
   throw new SonaraError("E_NOT_RUNNING", "no home folder: pass home, or set SONARA_HOME or LOCALAPPDATA");
 }

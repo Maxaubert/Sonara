@@ -11,6 +11,7 @@ What you need:
 | Node 18+ / Electron | `@sonara/runtime-win32-x64` | `bin/` (`sonarad.exe` and the files next to it), the notices, `runtimePath()` |
 | Python 3.9+ | `sonara-client` | the same API, standard library only |
 | anything else | `sonara-runtime-win-x64-<version>.zip` (GitHub release, with `SHA256SUMS`) | `sonarad.exe`, the files next to it and the notices; speak protocol v1 over TCP or HTTP. The zip also holds `sonara-hook.exe` and `sonara.exe`, the Claude Code plugin's hook adapter and command line, which a host does not need |
+| anything else, on macOS (Apple silicon, macOS 14+) | `sonara-runtime-macos-arm64-<version>.tar.gz` (same release, same `SHA256SUMS`) | `sonarad`, `libonnxruntime.dylib`, the notices (and the plugin's `sonara-hook` and `sonara`), each signed with Sonara's Developer ID and notarized. There is no npm runtime package for macOS yet: bundle from the tar.gz ([recipe](#macos-the-release-archive)) |
 
 The protocol behind all of them is `docs/protocol-v1.md`. The one licensing duty is to ship `THIRD_PARTY_NOTICES.md` (see [Licensing](#licensing)).
 
@@ -25,6 +26,25 @@ Keep these files in one folder (the package's `bin/`, the zip's top folder):
 | `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` | the Visual C++ runtime that `onnxruntime.dll` needs (app-local copies) |
 
 **Voices.** The runtime starts with Kokoro (neural, 28 English voices) when `onnxruntime.dll` is there, else with Windows' own voices. Kokoro's model (about 354 MB) is not in the package: it downloads on first use into `%LOCALAPPDATA%\Sonara\models\kokoro\v1.0\`, and Windows' voice reads meanwhile, so the first sentences never wait for it. `state.engine_status` shows the progress (draw it in your UI if you like). To ship the model with your installer instead, copy `kokoro-v1.0.onnx` and `voices-v1.0.bin` (the pinned files, see `THIRD_PARTY_NOTICES.md`) into that folder; nothing is downloaded then.
+
+### macOS: the release archive
+
+On macOS the same folder holds `sonarad` and `libonnxruntime.dylib` (with the two ONNX Runtime licence files); there is no Visual C++ runtime. The default home is `~/Library/Application Support/Sonara` (both SDKs' `resolveHome`/`resolve_home` and the plugin agree), the system voices (`say`) read while Kokoro downloads, and `runtimePath`/`runtime_path` is the `sonarad` without `.exe`. A tar.gz keeps the executables' mode; check it against `SHA256SUMS` and the signatures before you ship it:
+
+```sh
+v=<version>
+base=https://github.com/Maxaubert/Sonara/releases/download/v$v
+curl -fsSLO --proto =https --proto-redir =https "$base/sonara-runtime-macos-arm64-$v.tar.gz"
+curl -fsSLO --proto =https --proto-redir =https "$base/SHA256SUMS"
+grep " sonara-runtime-macos-arm64-$v.tar.gz\$" SHA256SUMS | shasum -a 256 -c -
+tar -xzf "sonara-runtime-macos-arm64-$v.tar.gz"
+codesign --verify --strict "sonara-runtime-macos-arm64-$v/sonarad"
+codesign --verify --strict "sonara-runtime-macos-arm64-$v/libonnxruntime.dylib"
+# Developer ID, as the plugin requires:
+codesign --verify --strict -R='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "WV7BY8CUM8"' "sonara-runtime-macos-arm64-$v/sonarad"
+```
+
+Inside an `.app`, copy `sonarad` and `libonnxruntime.dylib` into one folder (for example `Contents/MacOS/`; `sonarad` loads the library from its own folder) and sign them again with your own identity when you sign the app (the hardened runtime only loads a library signed by the same team). Give the signature that runs `sonarad` (your app's, under the hardened runtime) the `com.apple.security.automation.apple-events` entitlement, or pausing Music and Spotify fails silently (`packaging/macos/sonarad.entitlements`). A file a browser downloaded carries the quarantine attribute; a `curl` download does not.
 
 ## How `connect()` finds the runtime
 
@@ -161,7 +181,12 @@ Summary of `LICENSING.md`: you may sell your app, keep it closed-source, choose 
 
 ## Publishing the packages (maintainers)
 
-Releases are cut by `release.yml` once CI (`ci.yml`) passed on a push to `main` (#250): it builds `sonarad.exe`, `sonara-hook.exe` and `sonara.exe` (release), stages `onnxruntime.dll` (fetched by URL, pinned SHA-256) and the VC++ runtime next to them (`packaging/runtime_dlls.py`) and attaches `sonara-runtime-win-x64-<version>.zip` and its `SHA256SUMS` to the GitHub release (the Claude Code plugin installs that zip on first use).
+Releases are cut by `release.yml` once CI (`ci.yml`) passed on a push to `main` (#250). Two build jobs run in parallel:
+
+- `build-windows` builds `sonarad.exe`, `sonara-hook.exe` and `sonara.exe` (release), stages `onnxruntime.dll` (fetched by URL, pinned SHA-256) and the VC++ runtime next to them (`packaging/runtime_dlls.py`) and packs `sonara-runtime-win-x64-<version>.zip` (`packaging/release_zip.py --platform win-x64`).
+- `build-macos` (on `macos-latest`, `MACOSX_DEPLOYMENT_TARGET=14.0`) builds `sonarad`, `sonara-hook` and `sonara`, stages `libonnxruntime.dylib` (pinned SHA-256), signs all four with the Developer ID Application certificate (hardened runtime, secure timestamp), notarizes them (`packaging/sign_macos.py`) and packs `sonara-runtime-macos-arm64-<version>.tar.gz` (`release_zip.py --platform macos-arm64`, mode 0755 kept). **It fails when the signing secrets are missing**: a macOS release is never unsigned or ad-hoc signed (user decision 2026-11-11).
+
+The `release` job then publishes both archives and one `SHA256SUMS` listing both (`release_zip.py --merge`), and only when both builds passed: one `bin/runtime-version` serves both platforms, so a release without one archive would break that platform's plugin. The Claude Code plugin installs its platform's archive on first use.
 
 The same run then publishes the SDKs (#279) by trusted publishing (OIDC): no registry token exists anywhere. `sonara-client` goes to PyPI, `@sonara/client` and `@sonara/runtime-win32-x64` to npm; `@sonara/player` is private and stays unpublished. The `packages` job builds them with `python packaging/build_packages.py`, the script the CI `clients` job runs on every PR (npm tarballs packed as `tests/embed` packs them and checked for the files an app needs, `npm publish --dry-run`, the wheel and sdist through `twine check --strict`). The jobs `publish-npm` (environment `npm`) and `publish-pypi` (environment `pypi`) upload them; each skips a version the registry already has, so a rerun passes.
 
@@ -173,6 +198,24 @@ Two repository variables switch it on, one per registry. While a variable is uns
 | `PUBLISH_NPM` | `@sonara/client`, `@sonara/runtime-win32-x64` |
 
 `release.yml` started by hand (Actions, Run workflow, on `main`) with **packages_only** ticked publishes the packages of the existing release `v<version>` (built from its tag) without cutting a new one.
+
+### One-time setup: macOS signing
+
+Needs a paid Apple Developer Program membership. Then:
+
+1. In the Apple Developer portal (Certificates, Identifiers & Profiles), create a **Developer ID Application** certificate (a CSR from Keychain Access, Certificate Assistant, Request a Certificate From a Certificate Authority). Install it, then in Keychain Access export the certificate together with its private key as a `.p12` with a password.
+2. For notarization, create an **App Store Connect API key** (App Store Connect, Users and Access, Integrations, Team Keys, role Developer) and download its `.p8` once; note its key ID and the issuer ID. (Alternative: your Apple ID with an app-specific password from account.apple.com.)
+3. Store the repository secrets (Settings, Secrets and variables, Actions), for example with `gh secret set <NAME> -R Maxaubert/Sonara`:
+
+| secret | value |
+|---|---|
+| `APPLE_CERT_P12_BASE64` | `base64 -i DeveloperID.p12` |
+| `APPLE_CERT_PASSWORD` | the `.p12` password |
+| `APPLE_TEAM_ID` | the 10-character team ID (Membership details) |
+| `APPLE_API_KEY_P8_BASE64`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | `base64 -i AuthKey_<id>.p8`, the key ID, the issuer ID |
+| or `APPLE_ID`, `APPLE_APP_PASSWORD` | the Apple ID and its app-specific password (used only when the API key secrets are not all set) |
+
+`python packaging/sign_macos.py check-secrets` names what is missing (`build-macos` runs it first). To try the signing on a Mac with the certificate in your login keychain: `python packaging/sign_macos.py sign target/release` (finds the one Developer ID Application identity), then `notarize target/release` with the notary secrets in the environment. `--identity -` signs ad-hoc for a local test of the archive and the bootstrap only; never for a release.
 
 ### One-time setup: PyPI
 

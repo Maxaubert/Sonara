@@ -18,17 +18,19 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 CREATE_NO_WINDOW = 0x08000000
+# No console window for a child on Windows; nothing to ask for elsewhere.
+NO_WINDOW = {"creationflags": CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
 def start_runtime(exe: Path, home: Path, args: List[str]) -> Tuple[subprocess.Popen, dict]:
     proc = subprocess.Popen([str(exe), "--home", str(home), *args], stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            creationflags=CREATE_NO_WINDOW)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **NO_WINDOW)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         info = read_runtime(home)

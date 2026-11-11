@@ -14,7 +14,7 @@ await sonara.set("rate", 240);
 await sonara.close();
 ```
 
-- `connect(options)`: finds the shared runtime through `runtime.json`, starts the bundled `sonarad.exe` when none is usable (`autostart`, default on), takes over an idle incompatible one. Options: `clientName` (required), `runtimePath` (default `SONARA_RUNTIME`), `home`, `autostart`, `require`, `extensions`, `keepAlive`.
+- `connect(options)`: finds the shared runtime through `runtime.json`, starts the bundled `sonarad.exe` (`sonarad` on macOS) when none is usable (`autostart`, default on), takes over an idle incompatible one. Options: `clientName` (required), `runtimePath` (default `SONARA_RUNTIME`), `home`, `autostart`, `require`, `extensions`, `keepAlive`.
 - `speak(text, { mode: "append" | "replace", interrupt, label })` resolves with the item id.
 - `control(action)`: `play`, `pause`, `toggle`, `stop`, `skip`, `previous`, `next`, `restart`, `mute`, `unmute`.
 - `set(key, value)` / `get(key)` for `volume` (0..100), `rate` (100..400 wpm), `voice`, `engine`; `voices(engine?)`.

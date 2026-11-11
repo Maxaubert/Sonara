@@ -48,14 +48,19 @@ def build_wheel(out: Path) -> Path:
     return wheels[0]
 
 
+def venv_python(where: Path) -> Path:
+    """The venv's interpreter: Scripts/python.exe on Windows, bin/python elsewhere."""
+    return where / "Scripts" / "python.exe" if support.WINDOWS else where / "bin" / "python"
+
+
 def fresh_venv(where: Path, wheel: Path) -> Path:
     if UV:
         run([UV, "venv", "--quiet", "--python", sys.executable, where])
-        python = where / "Scripts" / "python.exe"
+        python = venv_python(where)
         run([UV, "pip", "install", "--quiet", "--python", python, wheel])
     else:
         run([sys.executable, "-m", "venv", where])
-        python = where / "Scripts" / "python.exe"
+        python = venv_python(where)
         run([python, "-m", "pip", "install", "--quiet", "--no-index", wheel])
     return python
 
@@ -65,12 +70,13 @@ def python_app(runtime):
     d = Path(tempfile.mkdtemp(prefix="sonara-embed-py-"))
     wheel = build_wheel(d / "dist")
     python = fresh_venv(d / "venv", wheel)
+    # This platform's archive: the zip on Windows, the tar.gz (exec bits kept) on macOS.
     out = run([sys.executable, str(support.REPO / "packaging" / "release_zip.py"), "--exe", runtime,
                "--out", d / "zip"])
     zip_path = Path(out.strip().splitlines()[-1])
     runtime_dir = support.unpack_release(zip_path, d / "zip" / "SHA256SUMS", d / "app")
     shutil.copy(support.HOSTS / "python_host.py", d / "app" / "host.py")
-    yield {"python": python, "wheel": wheel, "runtime": runtime_dir / "sonarad.exe", "app": d / "app"}
+    yield {"python": python, "wheel": wheel, "runtime": runtime_dir / f"sonarad{support.EXE}", "app": d / "app"}
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -122,11 +128,11 @@ def test_kokoro_without_onnxruntime_is_reported_unavailable_not_ready(python_app
         pytest.skip("Kokoro's model is not on this PC (set SONARA_KOKORO_MODELS)")
     bare = work / "bare"
     shutil.copytree(python_app["runtime"].parent, bare)
-    (bare / "onnxruntime.dll").unlink()
+    (bare / support.ORT).unlink()
     home = work / "home"
     prepare_voice_home("kokoro", home)
     env = support.host_env(home, support.voice_args("kokoro", work / "wav"), "voice",
-                           SONARA_RUNTIME=str(bare / "sonarad.exe"))
+                           SONARA_RUNTIME=str(bare / f"sonarad{support.EXE}"))
     env["SONARA_ORT_DYLIB"] = ""
     report = support.run_host([str(python_app["python"]), "host.py"], env, python_app["app"])
     assert report.get("unavailable") is True, report

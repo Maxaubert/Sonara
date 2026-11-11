@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
 
 import pytest
@@ -120,30 +122,44 @@ def test_gives_up_when_the_instance_stays_busy(home, fake):
     assert pid_alive(f.pid), "a busy instance is never stopped"
 
 
-# cmd.exe stands in for a sonarad that exits at once: it ignores the leading
-# "--home <home>" and runs what follows /c.
+# A stand-in for a sonarad that exits at once: on Windows cmd.exe, which
+# ignores the leading "--home <home>" and runs what follows /c; elsewhere a
+# shell script (it ignores its arguments) running ``sh``.
 CMD = os.environ.get("ComSpec", "cmd.exe")
+
+
+def stand_in(home, win_args, sh):
+    """(runtime_path, runtime_args) of a runtime that runs ``sh`` and exits."""
+    if os.name == "nt":
+        return CMD, win_args
+    script = home / "stand-in.sh"
+    script.write_text(f"#!/bin/sh\n{sh}\n", encoding="utf-8")
+    script.chmod(0o755)
+    return str(script), []
 
 
 def test_uses_the_other_clients_runtime_when_the_started_one_exits_3(home, fake):
     f = fake()
-    info = start_runtime(CMD, str(home), ["/d", "/c", "exit 3"], 5.0)
+    exe, args = stand_in(home, ["/d", "/c", "exit 3"], "exit 3")
+    info = start_runtime(exe, str(home), args, 5.0)
     assert info["pid"] == f.pid
 
 
 def test_start_failed_when_the_started_runtime_exits_with_another_code(home):
+    exe, args = stand_in(home, ["/d", "/c", "exit 1"], "exit 1")
     with pytest.raises(SonaraError) as e:
-        connect("unit", home=str(home), runtime_path=CMD, runtime_args=["/d", "/c", "exit 1"])
+        connect("unit", home=str(home), runtime_path=exe, runtime_args=args)
     assert e.value.code == "E_START_FAILED"
 
 
 def test_start_failed_when_no_runtime_json_appears_in_time(home):
+    exe, args = stand_in(home, ["/d", "/c", "ping -n 3 127.0.0.1 >nul"], "sleep 3")
     with pytest.raises(SonaraError) as e:
         connect(
             "unit",
             home=str(home),
-            runtime_path=CMD,
-            runtime_args=["/d", "/c", "ping -n 3 127.0.0.1 >nul"],
+            runtime_path=exe,
+            runtime_args=args,
             start_timeout=0.3,
         )
     assert e.value.code == "E_START_FAILED"
@@ -302,9 +318,24 @@ def test_resolve_home_order():
     env = {"SONARA_HOME": r"C:\s", "LOCALAPPDATA": r"C:\l"}
     assert resolve_home(r"C:\h", env) == r"C:\h"
     assert resolve_home(None, env) == r"C:\s"
-    assert resolve_home(None, {"LOCALAPPDATA": r"C:\l"}).endswith("Sonara")
+    assert resolve_home(None, {"LOCALAPPDATA": r"C:\l"}, "win32").endswith("Sonara")
     with pytest.raises(SonaraError):
-        resolve_home(None, {})
+        resolve_home(None, {}, "win32")
+
+
+def test_resolve_home_on_macos_is_under_application_support():
+    # The runtime, the bash launchers and the Node SDK build the same path.
+    got = resolve_home(None, {"HOME": "/Users/x", "LOCALAPPDATA": "/ignored"}, "darwin")
+    assert got == "/Users/x/Library/Application Support/Sonara"
+    assert resolve_home(None, {"SONARA_HOME": "/s", "HOME": "/Users/x"}, "darwin") == "/s"
+    with pytest.raises(SonaraError):
+        resolve_home(None, {}, "darwin")
+
+
+def test_resolve_home_defaults_to_this_platform():
+    want = (os.path.join("L", "Sonara") if sys.platform == "win32"
+            else "H/Library/Application Support/Sonara")
+    assert resolve_home(None, {"LOCALAPPDATA": "L", "HOME": "H"}) == want
 
 
 def test_pid_alive_never_ends_the_process(fake):
@@ -320,3 +351,14 @@ def test_the_package_has_no_runtime_dependencies():
     from pathlib import Path
     text = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
     assert "dependencies = []" in text
+
+
+def test_pid_alive_leaves_the_hosts_own_children_to_their_popen(tmp_path):
+    # A child the host started itself and that has ended: pid_alive must not
+    # reap it, or the host's Popen loses the exit code.
+    if os.name == "nt":
+        pytest.skip("zombies and waitpid are POSIX")
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(7)"])
+    time.sleep(0.5)
+    pid_alive(proc.pid)
+    assert proc.wait(5) == 7

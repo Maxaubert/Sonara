@@ -88,8 +88,26 @@ def test_no_plugin_file_runs_python():
 
 def test_bash_scripts_keep_lf_line_endings():
     # Git Bash runs these: a CR would end up in every command.
-    for name in ("sonara-hook-launch", "sonara", "sonara-runtime.sh", "runtime-version"):
+    for name in ("sonara-hook-launch", "sonara", "sonara-runtime.sh", "sonara-bootstrap.sh", "runtime-version"):
         assert b"\r" not in (REPO_ROOT / "bin" / name).read_bytes(), name
+
+
+def test_the_launchers_are_executable_in_git():
+    # macOS runs them by their shebang: git must keep mode 100755.
+    import subprocess
+    out = subprocess.run(["git", "ls-files", "-s", "bin/"], cwd=REPO_ROOT, capture_output=True, text=True)
+    if out.returncode != 0:
+        pytest.skip("not a git checkout")
+    modes = {line.split("\t")[1]: line.split()[0] for line in out.stdout.splitlines()}
+    for name in ("bin/sonara-hook-launch", "bin/sonara", "bin/sonara-bootstrap.sh"):
+        assert modes.get(name) == "100755", (name, modes.get(name))
+
+
+def test_the_plugin_says_it_runs_on_windows_and_macos():
+    assert "Windows and macOS" in _load(PLUGIN_JSON)["description"]
+    data = _load(MARKETPLACE_JSON)
+    assert "Windows and macOS" in data["description"]
+    assert "Windows and macOS" in data["plugins"][0]["description"]
 
 
 def test_the_runtime_version_is_the_release_version():

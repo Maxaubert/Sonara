@@ -1,6 +1,7 @@
 """Fixtures of the plugin suite (#202). Needs
-``cargo build -p sonarad -p sonara-hook -p sonara-cli``, Git Bash and
-Windows PowerShell."""
+``cargo build -p sonarad -p sonara-hook -p sonara-cli``, and Git Bash and
+Windows PowerShell on Windows (macOS ships what it needs: /bin/bash, curl,
+shasum, tar and codesign)."""
 from __future__ import annotations
 
 import sys
@@ -17,7 +18,7 @@ import plugin_harness as ph  # noqa: E402
 def exes() -> Path:
     d = ph.build_dir()
     if d is None:
-        pytest.fail("sonarad.exe, sonara-hook.exe and sonara.exe not built side by side: "
+        pytest.fail(f"{', '.join(ph.EXES)} not built side by side: "
                     "run 'cargo build -p sonarad -p sonara-hook -p sonara-cli'")
     return d
 
@@ -26,7 +27,7 @@ def exes() -> Path:
 def bash() -> Path:
     b = ph.find_bash()
     if b is None:
-        pytest.fail("Git Bash not found (Claude Code on Windows runs hooks through it)")
+        pytest.fail("bash not found (Claude Code on Windows runs hooks through Git Bash)")
     return b
 
 
