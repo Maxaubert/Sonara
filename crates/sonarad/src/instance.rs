@@ -247,6 +247,7 @@ mod unix {
             .create(true)
             .truncate(false)
             .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(&path)
             .map_err(|e| AcquireError::Os(format!("cannot open {}: {e}", path.display())))?;
         // SAFETY: flock on a descriptor this function owns.

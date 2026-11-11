@@ -47,9 +47,17 @@ pub fn write(
     let result = (|| {
         let mut open = std::fs::OpenOptions::new();
         open.write(true).create(true).truncate(true);
-        // On unix the file is user-only (0600) from the moment it exists.
+        // On unix the file is user-only (0600) from the moment it exists,
+        // and always a new file: a leftover temp file (or a link planted in
+        // its place) is removed, and a link is never followed.
         #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::remove_file(&tmp);
+            open.create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW);
+        }
         let mut f = open
             .open(&tmp)
             .map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
@@ -156,6 +164,19 @@ mod tests {
         assert_eq!(rfc3339(t), "2026-09-21T14:13:20Z");
         let leap = UNIX_EPOCH + Duration::from_secs(951_782_400);
         assert_eq!(rfc3339(leap), "2000-02-29T00:00:00Z");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_the_temp_path_is_never_written_through() {
+        let dir = temp_dir("link");
+        let path = dir.join("runtime.json");
+        let target = dir.join("elsewhere");
+        std::fs::write(&target, "untouched").unwrap();
+        std::os::unix::fs::symlink(&target, temp_path(&path, 7)).unwrap();
+        write(&path, &info(7), |_| Ok(())).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
+        assert_eq!(read_pid(&path), Some(7));
     }
 
     #[test]

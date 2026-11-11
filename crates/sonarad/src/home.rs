@@ -48,7 +48,29 @@ pub fn create(dir: &Path) -> std::io::Result<()> {
     b.recursive(true);
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-    b.create(dir)
+    b.create(dir)?;
+    #[cfg(unix)]
+    user_only(dir)?;
+    Ok(())
+}
+
+/// A home made earlier (or by someone else) must be this user's own folder,
+/// not a link, and is narrowed to 0700: the token file lives in it.
+#[cfg(unix)]
+fn user_only(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = std::fs::symlink_metadata(dir)?;
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    if !meta.is_dir() || meta.uid() != uid {
+        return Err(std::io::Error::other(
+            "it is not a folder owned by this user",
+        ));
+    }
+    if meta.mode() & 0o077 != 0 {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 /// Comparable form of an existing folder.
@@ -168,6 +190,31 @@ mod tests {
         create(&dir).unwrap();
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+        let _ = std::fs::remove_dir_all(&top);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_open_home_made_earlier_is_narrowed_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sonarad-home-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        create(&dir).unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_home_that_is_a_link_is_refused() {
+        let top = std::env::temp_dir().join(format!("sonarad-home-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&top);
+        std::fs::create_dir_all(top.join("real")).unwrap();
+        std::os::unix::fs::symlink(top.join("real"), top.join("home")).unwrap();
+        assert!(create(&top.join("home")).is_err());
         let _ = std::fs::remove_dir_all(&top);
     }
 
