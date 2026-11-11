@@ -1279,9 +1279,11 @@ name = "sonarad"
 version = "0.37.2"
 dependencies = [
  "bytes",
+ "getrandom",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "serde_json",
  "sonara-agent",
  "sonara-audio",

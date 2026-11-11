@@ -6,7 +6,8 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
 [--output device|null|wav:DIR] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
        [--keys windows|fake] [--no-external-engines] [--migrate-from DIR] [--version]
 
-  --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
+  --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara;
+                      on macOS ~/Library/Application Support/Sonara)
   --engine ID         engine to start with (default: the saved one, else kokoro
                       when onnxruntime.dll is next to sonarad.exe, else
                       onecore). Kokoro downloads its model on first use and
@@ -32,7 +33,7 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
   --standalone        never exit for idleness
   --migrate-from DIR  import the Python plugin's settings from DIR when the
                       home has no config.json yet (default: %USERPROFILE%\\.sonara,
-                      and only for the default home)";
+                      and only for the default home on Windows)";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputKind {
