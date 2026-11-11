@@ -1,8 +1,9 @@
-//! The seams to the operating system. Everything Windows-facing (audio
+//! The seams to the operating system. Everything OS-facing (audio
 //! sessions, media sessions, hotkey registration, the keyboard layout) is
 //! reached only through these traits, so the rules are tested with fakes
 //! (`crate::fake`) and never touch the user's real audio, media players or
-//! hotkeys. `crate::win::platform()` is the real one.
+//! hotkeys. `crate::win::platform()` and `crate::mac::platform()` are the
+//! real ones.
 use std::sync::Arc;
 
 /// Platform calls fail with a message (logged, never raised to speech).
@@ -76,21 +77,25 @@ pub trait KeyState: Send + Sync {
 
 type Factory<T> = Arc<dyn Fn() -> Box<T> + Send + Sync>;
 
-/// Called when the Windows session ends (logoff, shutdown); it must finish
-/// its work before returning, the process ends right after (#18).
+/// Called when the user's session ends (logoff, shutdown; on macOS also
+/// SIGTERM); it must finish its work before returning, the process ends
+/// right after (#18).
 pub type OnSessionEnd = Box<dyn Fn() + Send + Sync>;
 
 /// A platform: factories, because audio and media objects live on the
 /// thread that created them (COM), and a registrar on its pump thread.
 #[derive(Clone)]
 pub struct Platform {
-    /// `windows` or `fake`.
+    /// `windows`, `macos` or `fake`.
     pub name: &'static str,
+    /// Whether other apps' audio can be ducked. Where it cannot (macOS,
+    /// which has no per-app volume), `duck` mode pauses media instead.
+    pub duck: bool,
     pub audio: Factory<dyn AudioSessions>,
     pub media: Factory<dyn MediaSessions>,
     pub registrar: Factory<dyn Registrar>,
     pub layout: Arc<dyn KeyboardLayout>,
     pub keys: Arc<dyn KeyState>,
-    /// Run a callback when the Windows session ends (#18).
+    /// Run a callback when the user's session ends (#18).
     pub session_end: Arc<dyn Fn(OnSessionEnd) + Send + Sync>,
 }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|macos|fake|ID] \
-[--output device|null|wav:DIR] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
+[--output device|null|wav:DIR] [--system os|fake] [--idle-exit SECONDS] [--standalone]
        [--keys os|fake] [--no-external-engines] [--migrate-from DIR] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara;
@@ -20,9 +20,10 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|ma
                       a silent output that keeps real time, or 'wav:DIR', the
                       null output that also writes every chunk it is given
                       to a WAV file in DIR (a testing aid)
-  --system KIND       platform of the 'system' extension: 'windows' (default)
-                      or 'fake', a testing aid that keeps fake apps, media
-                      and hotkeys in <home>\\fake-system.json
+  --system KIND       platform of the 'system' extension: 'os' (default;
+                      'windows' is the same) or 'fake', a testing aid that
+                      keeps fake apps, media and hotkeys in
+                      <home>\\fake-system.json
   --keys KIND         where external engine keys are kept: 'os' (default:
                       Windows Credential Manager, the macOS Keychain;
                       'windows' is an alias) or 'fake', a testing aid
@@ -59,7 +60,8 @@ pub enum KeysKind {
 /// The platform behind the `system` extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemKind {
-    Windows,
+    /// This operating system's (`os`, or `windows` as before).
+    Os,
     /// Fake apps, media and hotkeys in a JSON file in the home (tests).
     Fake,
 }
@@ -94,7 +96,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     let mut engine = None;
     let mut migrate_from = None;
     let mut output = None;
-    let mut system = SystemKind::Windows;
+    let mut system = SystemKind::Os;
     let mut idle_exit = crate::lifetime::DEFAULT_IDLE_EXIT;
     let mut standalone = false;
     let mut keys = KeysKind::Os;
@@ -119,7 +121,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             }
             "--system" => {
                 system = match value("--system")?.as_str() {
-                    "windows" => SystemKind::Windows,
+                    "os" | "windows" => SystemKind::Os,
                     "fake" => SystemKind::Fake,
                     other => return Err(format!("unknown --system '{other}'")),
                 }
@@ -183,7 +185,7 @@ mod tests {
         assert_eq!(a.output, OutputKind::Device);
         assert_eq!(a.idle_exit, Duration::from_secs(30));
         assert!(!a.standalone);
-        assert_eq!(a.system, SystemKind::Windows);
+        assert_eq!(a.system, SystemKind::Os);
         assert_eq!(a.migrate_from, None);
         assert_eq!(a.keys, KeysKind::Os);
         assert!(a.external_engines);
@@ -220,6 +222,12 @@ mod tests {
     #[test]
     fn the_system_platform_can_be_the_fake() {
         assert_eq!(run(&["--system", "fake"]).system, SystemKind::Fake);
+        assert_eq!(run(&["--system", "os"]).system, SystemKind::Os);
+        assert_eq!(
+            run(&["--system", "windows"]).system,
+            SystemKind::Os,
+            "the old name still works"
+        );
         assert!(parse(["--system".to_string(), "linux".to_string()]).is_err());
     }
 

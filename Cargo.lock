@@ -1272,8 +1272,10 @@ dependencies = [
 name = "sonara-system"
 version = "0.37.2"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
+ "signal-hook-registry",
  "sonara-audio",
  "sonara-engine",
  "sonara-reader",

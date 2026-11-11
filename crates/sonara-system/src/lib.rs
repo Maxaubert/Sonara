@@ -1,5 +1,5 @@
-//! `sonara-system`: Sonara L4 (spec section 2 and 6), the Windows extras a
-//! host turns on only when a client enables the `system` extension.
+//! `sonara-system`: Sonara L4 (spec section 2 and 6), the Windows and macOS
+//! extras a host turns on only when a client enables the `system` extension.
 //!
 //! - [`audio::AudioControl`]: duck other apps' audio sessions
 //!   ([`ducking::Ducker`], per-session volume across every render device)
@@ -9,19 +9,23 @@
 //! - [`hotkeys::Hotkeys`]: global hotkeys (RegisterHotKey on a message-loop
 //!   thread) that hand [`keymap::Action`]s to the host, which maps them to
 //!   core, channel and agent controls.
-//! - [`keymap`]: actions, the default chords Ctrl+Alt+Up/Down/M/P,
-//!   `keymap.json` with bind, unbind and reset, and the AltGr check.
+//! - [`keymap`]: actions, the default chords Ctrl+Alt+Up/Down/M/P
+//!   (Ctrl+Option on macOS), `keymap.json` with bind, unbind and reset,
+//!   and the AltGr check.
 //! - [`log`]: the activity lines (apps paused, resumed, ducked or
 //!   restored, and why) a host writes to its support log.
 //!
-//! Everything Windows-facing goes through [`platform::Platform`]; tests use
-//! [`fake::Fake`]. L4 builds only on the L1 facade (R7, `sonara-core/tests/layering.rs`).
+//! Everything OS-facing goes through [`platform::Platform`] (`win` on
+//! Windows, `mac` on macOS: Carbon hotkeys, AppleScript pause, no duck);
+//! tests use [`fake::Fake`]. L4 builds only on the L1 facade (R7, `sonara-core/tests/layering.rs`).
 pub mod audio;
 pub mod ducking;
 pub mod fake;
 pub mod hotkeys;
 pub mod keymap;
 pub mod log;
+#[cfg(target_os = "macos")]
+pub mod mac;
 pub mod pausing;
 pub mod platform;
 pub mod state_file;

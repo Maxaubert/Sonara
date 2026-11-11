@@ -3,7 +3,7 @@ name = "sonara-system"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Sonara L4 (Windows): duck or pause other apps' audio with crash restore, global hotkeys and the keymap"
+description = "Sonara L4 (Windows, macOS): duck or pause other apps' audio with crash restore, global hotkeys and the keymap"
 
 [dependencies]
 # L4 builds only on the L1 facade (R7, checked by sonara-core/tests/layering.rs); the
@@ -29,6 +29,13 @@ windows = { workspace = true, features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-future.workspace = true
+
+# macOS (`mac.rs`): Carbon hotkeys, the keyboard layout and AppKit through
+# their C interfaces; SIGTERM through the registry tokio uses too, so both
+# handlers run.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+signal-hook-registry = "1.4"
 
 [dev-dependencies]
 sonara-reader = { workspace = true, features = ["test-util"] }

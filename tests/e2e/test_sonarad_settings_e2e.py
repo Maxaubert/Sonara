@@ -23,13 +23,29 @@ import harness  # noqa: E402
 EXE = harness.find_sonarad()
 pytestmark = pytest.mark.skipif(EXE is None, reason="sonarad.exe not built (cargo build -p sonarad)")
 
+MAC = sys.platform == "darwin"
+
+
+def combo(windows: str) -> str:
+    """A chord as the runtime writes it on this OS: macOS says Option for
+    Alt and Cmd for Win, in its menu order (Ctrl, Option, Shift, Cmd)."""
+    if not MAC:
+        return windows
+    *mods, key = windows.split("+")
+    names = {"Ctrl": "Ctrl", "Alt": "Option", "Shift": "Shift", "Win": "Cmd"}
+    return "+".join([names[m] for m in ("Ctrl", "Alt", "Shift", "Win") if m in mods] + [key])
+
 
 class Live:
     """One runtime plus a TCP client that enabled the extensions (as the
     Claude plugin would), and its settings_url."""
 
-    def __init__(self, home: Path, extensions=("agent", "system")):
+    def __init__(self, home: Path, extensions=("agent", "system"), world=None):
         self.home = home
+        if world is not None:
+            # The fake platform reads its world (no_duck) when it starts.
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "fake-system.json").write_text(json.dumps(world), encoding="utf-8")
         self.rt = harness.Runtime(EXE, home)
         self.client = self.rt.tcp(extensions=list(extensions))
         r = self.client.request({"type": "get", "key": "settings_url"})
@@ -528,7 +544,7 @@ def test_hotkey_capture_with_the_keyboard(live, browser):
 
     def bound():
         b = {x["action"]: x for x in lv.get("hotkeys")["bindings"]}
-        return b["pause"]["combo"] == "Ctrl+Alt+S"
+        return b["pause"]["combo"] == combo("Ctrl+Alt+S")
     assert eventually(bound)
     page.close()
 
@@ -547,7 +563,7 @@ def test_a_chord_another_action_uses_moves_to_the_new_one(live, browser):
 
     def moved():
         b = {x["action"]: x for x in lv.get("hotkeys")["bindings"]}
-        return b["pause"]["combo"] == "Ctrl+Alt+M" and b["mute"]["combo"] is None
+        return b["pause"]["combo"] == combo("Ctrl+Alt+M") and b["mute"]["combo"] is None
     assert eventually(moved)
     page.close()
 
@@ -710,16 +726,55 @@ def test_the_section_hotkeys_are_listed_and_can_be_rebound(live, browser):
         row = page.locator(f"[data-action={action}]")
         pw.expect(row.locator(".n")).to_have_text(name)
         pw.expect(row.locator(".kbd")).to_have_attribute(
-            "aria-label", f"{name}: Ctrl+Alt+{key}. Press to change.")
-    for action, chord, combo in [("previous_question", "Control+Alt+KeyJ", "Ctrl+Alt+J"),
-                                 ("next_question", "Control+Alt+KeyK", "Ctrl+Alt+K")]:
+            "aria-label", f"{name}: {combo('Ctrl+Alt+' + key)}. Press to change.")
+    for action, chord, chord_label in [("previous_question", "Control+Alt+KeyJ", combo("Ctrl+Alt+J")),
+                                       ("next_question", "Control+Alt+KeyK", combo("Ctrl+Alt+K"))]:
         page.locator(f"[data-action={action}] .kbd").focus()
         page.keyboard.press("Enter")
         page.wait_for_selector(f"[data-action={action}].listen")
         page.keyboard.press(chord)
 
-        def bound(action=action, combo=combo):
+        def bound(action=action, label=chord_label):
             b = {x["action"]: x for x in lv.get("hotkeys")["bindings"]}
-            return b[action]["combo"] == combo
+            return b[action]["combo"] == label
         assert eventually(bound)
+    page.close()
+
+
+def test_modifier_names_follow_the_runtime_platform(live, browser):
+    # macOS: Alt is Option and Win is Cmd on the keycaps, and Ctrl+Option
+    # (VoiceOver's modifier) gets a note; Windows keeps Ctrl+Alt.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=hotkeys]")
+    caps = page.locator("[data-action=restart] .kbd i").all_text_contents()
+    assert caps == ["Ctrl", "Option" if MAC else "Alt", "Up"], caps
+    if MAC:
+        pw.expect(page.locator("#voiceover-note")).to_be_visible()
+    else:
+        pw.expect(page.locator("#voiceover-note")).to_be_hidden()
+    page.close()
+
+
+def test_duck_is_locked_with_a_note_where_the_platform_cannot_duck(live, browser):
+    # macOS has no per-app volume: Duck is greyed out and a note says it
+    # pauses media instead; Off and Pause still work.
+    lv = live(world={"no_duck": True})
+    page = open_page(browser, lv.url)
+    page.click("[data-page=audio]")
+    pw.expect(page.locator("#audio-seg [data-value=duck]")).to_be_disabled()
+    pw.expect(page.locator("#duck-unavailable")).to_be_visible()
+    page.click("#audio-seg [data-value=off]")
+    assert eventually(lambda: lv.saved().get("audio_mode") == "off")
+    page.click("#audio-seg [data-value=pause]")
+    assert eventually(lambda: lv.saved().get("audio_mode") == "pause")
+    page.close()
+
+
+def test_duck_is_open_where_the_platform_can_duck(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=audio]")
+    pw.expect(page.locator("#audio-seg [data-value=duck]")).to_be_enabled()
+    pw.expect(page.locator("#duck-unavailable")).to_be_hidden()
     page.close()

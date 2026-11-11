@@ -329,3 +329,26 @@ fn shutdown_returns_when_a_media_app_hangs() {
         started.elapsed()
     );
 }
+
+#[test]
+fn duck_mode_pauses_media_where_ducking_is_unavailable() {
+    // macOS has no per-app volume (`Platform::duck` false): `duck` pauses
+    // media instead, never touches a volume, and still restores at once.
+    let fake = Fake::new();
+    fake.add_audio(100, "vlc", 0.8);
+    fake.add_media("spotify", true);
+    let mut platform = fake.platform();
+    platform.duck = false;
+    let c = AudioControl::new(&platform, AudioConfig::new(tmp("noduck")));
+    c.set_mode(AudioMode::Duck);
+    c.arm(true);
+    c.set_activity(Activity::Speaking);
+    c.sync();
+    assert!(!fake.media("spotify").unwrap().playing, "paused instead");
+    assert_eq!(fake.world().audio[0].set_calls, 0, "no volume is touched");
+    assert_eq!(c.status().mode, AudioMode::Duck, "the setting is kept");
+    assert!(c.status().paused && !c.status().ducked);
+    c.set_activity(Activity::Held);
+    c.sync();
+    assert!(fake.media("spotify").unwrap().playing, "resumed at once");
+}

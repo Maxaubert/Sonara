@@ -85,6 +85,7 @@
           <div class="row"><div class="l"><span class="n" id="audio-label">Other apps</span></div><div class="c"><div class="seg" id="audio-seg" role="radiogroup" aria-labelledby="audio-label"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="duck">Duck</button><button type="button" role="radio" data-value="pause">Pause</button></div></div></div>
           <div class="row" id="duck-row"><div class="l"><label class="n" for="duck">Duck to</label></div><div class="c range"><input id="duck" type="range"><output id="duck-out" for="duck"></output></div></div>
         </div>
+        <p class="notice" id="duck-unavailable" hidden>Ducking is not available on macOS. Duck pauses Music and Spotify while Sonara speaks, as Pause does.</p>
         <h2 class="gl">Chimes</h2>
         <div class="group">
           <div class="row"><div class="l"><span class="n">Folder</span></div><div class="c"><div class="code" id="earcons-folder-box"><bdi id="earcons-folder">&ndash;</bdi></div></div></div>
@@ -110,6 +111,7 @@
       <section class="page" id="hotkeys" aria-labelledby="h-hotkeys">
         <h1 id="h-hotkeys">Hotkeys</h1>
         <p class="notice" id="hotkeys-inactive" hidden>Hotkeys are off until an app that uses them is connected.</p>
+        <p class="notice" id="voiceover-note" hidden>Ctrl+Option is the VoiceOver modifier. If you use VoiceOver, rebind these shortcuts with Cmd so VoiceOver keeps its keys.</p>
         <div class="group key-list">
           <div class="row key-row" data-action="restart"><div class="l key-copy"><span class="n">Back / hold: from the start</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Back / hold: from the start"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
           <div class="row key-row" data-action="flush"><div class="l key-copy"><span class="n">Next / hold: flush</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Next / hold: flush"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>

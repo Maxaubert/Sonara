@@ -47,6 +47,7 @@ use windows_future::IAsyncOperation;
 pub fn platform() -> Platform {
     Platform {
         name: "windows",
+        duck: true,
         audio: Arc::new(|| Box::new(CoreAudio) as Box<dyn AudioSessions>),
         media: Arc::new(|| Box::new(Gsmtc) as Box<dyn MediaSessions>),
         registrar: Arc::new(|| Box::new(HotkeyThread::new()) as Box<dyn Registrar>),
