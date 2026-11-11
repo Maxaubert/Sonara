@@ -56,7 +56,7 @@ def test_a_developer_id_signature_has_the_hardened_runtime_and_a_timestamp():
     assert argv[argv.index("--options") + 1] == "runtime"
     assert "--timestamp" in argv
     assert argv[argv.index("--keychain") + 1] == "/k/ci.keychain-db"
-    assert argv[-1] == "/b/sonarad"
+    assert Path(argv[-1]) == Path("/b/sonarad")
 
 
 def test_an_ad_hoc_signature_is_only_for_local_tests():
