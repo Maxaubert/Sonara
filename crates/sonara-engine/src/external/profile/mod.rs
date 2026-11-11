@@ -27,8 +27,13 @@ pub use validate::validate_id;
 
 /// At most this many profiles (spec 5.2).
 pub const MAX_PROFILES: usize = 16;
-/// Ids of the built-in engines, refused as profile ids.
+/// Ids of the built-in engines, refused as profile ids. `macos` (the
+/// macOS system voices) only where that engine exists, so a Windows profile
+/// of that name keeps working.
+#[cfg(not(target_os = "macos"))]
 pub const BUILTIN_IDS: &[&str] = &["kokoro", "onecore", "fake"];
+#[cfg(target_os = "macos")]
+pub const BUILTIN_IDS: &[&str] = &["kokoro", "onecore", "macos", "fake"];
 
 /// The range of `chunk_chars` (every kind, send mode `message`): the most
 /// characters one request takes; the provider's own input limit still

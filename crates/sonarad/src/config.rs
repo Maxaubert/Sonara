@@ -117,7 +117,12 @@ pub const SCHEMA: &[Setting] = &[
         key: "engine",
         layer: Layer::Reader,
         kind: Kind::Text,
-        default: "\"onecore\"",
+        // The OS engine (`sonara_engine::OS_ENGINE`).
+        default: if cfg!(target_os = "macos") {
+            "\"macos\""
+        } else {
+            "\"onecore\""
+        },
     },
     Setting {
         key: "voice",
@@ -1019,6 +1024,20 @@ mod tests {
 
     fn read(path: &Path) -> Value {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_default_engine_is_the_os_engine() {
+        assert_eq!(
+            default("engine"),
+            Some(json!(sonara_engine::OS_ENGINE.as_str()))
+        );
+        let expected = if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "onecore"
+        };
+        assert_eq!(default("engine"), Some(json!(expected)));
     }
 
     #[test]

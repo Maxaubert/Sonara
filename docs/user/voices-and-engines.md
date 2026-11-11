@@ -10,6 +10,7 @@ On the **Speech** page, **Engine** picks who speaks and **Voice** picks the voic
 |---|---|---|
 | Kokoro (default) | A one-time model download | Yes, after the download |
 | Windows voices (OneCore) | Nothing | Yes |
+| macOS voices (`macos`, on a Mac) | Nothing | Yes |
 | An engine you added | The service or program, usually a key | Only if it runs on your PC |
 
 Default voice: `af_sarah`.
@@ -37,6 +38,14 @@ No download is needed. Natural voices sound better: open *Settings > Time & lang
 - Or run this in an elevated prompt: `DISM /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0`
 
 Kokoro voices are not affected.
+
+## macOS voices
+
+On a Mac the system voices take the place of the Windows voices: engine id `macos`, read with the built-in `say` program. They need no download and speak while Kokoro's model downloads.
+
+- Default voice: the best English (United States) *Premium* or *Enhanced* voice you have installed, else your Mac's system voice.
+- Better voices: open *System Settings > Accessibility > Spoken Content > System voice > Manage Voices* and add an English (United States) voice. Premium and Enhanced voices sound best.
+- Each sentence goes to `say`, which writes it as audio to a temporary file in your user's temp folder; Sonara reads that file and deletes it at once.
 
 ## Speech engines you add
 

@@ -9,6 +9,10 @@ pub const MISSING_VOICE_DATA_FIX: &str = "Fix: Settings > Time & language > Spee
 voices, remove and add English (United States) again, or in an elevated prompt run: DISM \
 /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0";
 
+/// How to get a macOS system voice (the `macos` engine).
+pub const MACOS_VOICES_FIX: &str = "Fix: System Settings > Accessibility > Spoken Content > \
+System voice > Manage Voices, and add an English (United States) voice.";
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// The host's licence policy does not allow this engine (R6).

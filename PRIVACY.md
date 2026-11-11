@@ -37,7 +37,10 @@ your computer and what, if anything, leaves it.
 Claude Code hands Sonara text through plugin hooks: assistant prose, question options, plan text,
 permission-prompt descriptions and short tool names. Sonara turns it into sentences and speaks them
 with the Windows speech engine or the Kokoro engine, both running locally (or, if you added and
-selected one, with an external speech engine: see External voices). Its parts talk to each
+selected one, with an external speech engine: see External voices). On a Mac the macOS system
+voices take the Windows engine's place: each sentence goes on its standard input to the built-in
+`/usr/bin/say`, which writes its audio to a temporary file in your user's temp folder
+(`sonara-say-<pid>-<n>-<time>.wav`), deleted as soon as it is read. Its parts talk to each
 other over a loopback connection (`127.0.0.1`) protected by a token stored in your profile. The
 settings page is served on the same loopback address and needs that token too.
 
@@ -127,7 +130,7 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   use fewer of the free tier's requests.
 - **Nothing is sent while Sonara is muted.** While Sonara is muted or super-muted (the mute
   hotkey, the settings page's mute level, or `mute` from any client), nothing goes to an external
-  engine: Sonara reads with its built-in voice (Kokoro, else the Windows voices) on your PC, says
+  engine: Sonara reads with its built-in voice (Kokoro, else the Windows or macOS voices) on your PC, says
   its own short confirmations ("Muted.", "Unmuted.") with that voice too, does not ask for voice
   lists, and cuts a sentence that was on its way the moment you mute. Only two things you ask for
   on purpose still reach the engine while muted: the *Test* button (`engine_test`) and a voice

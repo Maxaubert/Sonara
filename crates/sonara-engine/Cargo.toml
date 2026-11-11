@@ -5,9 +5,13 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["onecore"]
+# Each OS engine compiles to nothing off its own platform, so both are on by
+# default and each target gets its own.
+default = ["onecore", "macos-say"]
 # The Windows OneCore engine (Windows.Media.SpeechSynthesis).
 onecore = ["dep:windows", "dep:windows-future"]
+# The macOS system voice engine (/usr/bin/say); no dependency.
+macos-say = []
 # The Kokoro engine: vendored misaki G2P, ONNX Runtime loaded at run time
 # (Microsoft's onnxruntime.dll next to the exe), and the model manager.
 kokoro = ["dep:misaki", "dep:ort", "dep:ureq", "dep:sha2", "dep:regex", "dep:serde_json"]

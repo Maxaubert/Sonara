@@ -36,7 +36,7 @@ Good to know:
 
 | Label | Key | Default | Range or choices | Effect |
 |---|---|---|---|---|
-| Engine | `engine` | Kokoro (see note) | `kokoro`, `onecore` (Windows voices), or the id of an engine you added | The voice engine that reads. Not stored until you pick one |
+| Engine | `engine` | Kokoro (see note) | `kokoro`, `onecore` (Windows voices), `macos` (macOS voices, on a Mac), or the id of an engine you added | The voice engine that reads. Not stored until you pick one |
 | Voice | `voice` | `af_sarah` | Any voice the engine lists, or none (the engine's own voice) | The voice. A preview button speaks a sample. If the engine lacks a saved voice, the saved choice waits in `config.json` and applies once it is available |
 | Rate | `rate` | 250 | 100 to 400 words per minute, step 5 | Speaking speed |
 | Mute | `mute_level` | 0 | 0 Unmuted, 1 Muted, 2 Super muted | Muted: text is not spoken, chimes still play. Super muted: chimes are silent too. Set by the Ctrl+Alt+M hotkey as well |
