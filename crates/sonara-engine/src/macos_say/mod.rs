@@ -152,7 +152,18 @@ pub fn choose_voice<'a>(
 /// changes), which text from an agent must never trigger: break each "[["
 /// with a space, which is not spoken.
 pub fn guard_text(text: &str) -> String {
-    text.replace("[[", "[ [")
+    // Split every run of '[': a single pass of replace("[[", "[ [") leaves
+    // "[[" in "[[[[", which `say` would read as a command.
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut prev = '\0';
+    for c in text.chars() {
+        if c == '[' && prev == '[' {
+            out.push(' ');
+        }
+        out.push(c);
+        prev = c;
+    }
+    out
 }
 
 /// Turn a failed `say` into an `Error`: its exit status and the first line
@@ -311,7 +322,10 @@ not a voice line
     #[test]
     fn embedded_say_commands_in_the_text_are_not_obeyed() {
         assert_eq!(guard_text("a [[rate 50]] b"), "a [ [rate 50]] b");
-        assert_eq!(guard_text("[[[["), "[ [[ [");
+        assert_eq!(guard_text("[[[["), "[ [ [ [");
+        for n in 2..9 {
+            assert!(!guard_text(&"[".repeat(n)).contains("[["), "{n} brackets");
+        }
         assert_eq!(guard_text("plain [x]"), "plain [x]");
     }
 
