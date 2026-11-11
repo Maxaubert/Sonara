@@ -108,7 +108,9 @@ impl Engines {
             .collect();
         let mut f = Map::new();
         f.insert("engines".into(), Value::Array(views));
-        let builtin: Vec<&str> = ["kokoro", "onecore", "macos", "fake"]
+        // The OS engine of this platform only: elsewhere `macos` (or
+        // `onecore`) may be a user's profile id.
+        let builtin: Vec<&str> = ["kokoro", sonara_engine::OS_ENGINE.as_str(), "fake"]
             .into_iter()
             .filter(|b| self.registries().first().is_some_and(|r| r.get(b).is_ok()))
             .collect();

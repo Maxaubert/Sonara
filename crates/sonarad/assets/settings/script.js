@@ -745,9 +745,10 @@ let editing = null;       // the id of the profile the form edits, or null for a
 const testResults = {};   // id -> {ok, text}, shown under the profile
 
 function engineName(id) {
-  if (ENGINE_NAMES[id]) return ENGINE_NAMES[id];
+  // A profile first: off macOS, "macos" may be a user's profile id.
   const p = engineData && engineData.engines.find(e => e.id === id);
-  return p && p.label ? p.label : id;
+  if (p) return p.label ? p.label : id;
+  return ENGINE_NAMES[id] || id;
 }
 function kindText(v) {
   if (v.kind === "openai-compatible") {
@@ -1794,7 +1795,7 @@ addEventListener("beforeunload", e => {
 // One plain list: the built-in engines first, then the user's own, then "Add new engine...".
 const PICKER_NAMES = {kokoro: "Kokoro", onecore: "Windows voices", macos: "macOS voices"};
 const ADD_ENGINE = "__add";
-function pickerName(id) { return PICKER_NAMES[id] || engineName(id); }
+function pickerName(id) { return (!isProfile(id) && PICKER_NAMES[id]) || engineName(id); }
 function isProfile(id) { return !!(engineData && engineData.engines.some(e => e.id === id)); }
 
 function renderEnginePicker(enginesOn) {

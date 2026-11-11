@@ -11,12 +11,16 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Short text `warm` synthesizes to prove a voice speaks.
 const PROBE: &str = "Sonara.";
 /// How often a synthesis checks whether its `say` ended.
 const POLL: Duration = Duration::from_millis(5);
+/// The time limit of one synthesis: this much, plus `PER_CHAR` for each
+/// character of text. Generous, since `say` writes faster than real time.
+const BASE_TIMEOUT: Duration = Duration::from_secs(20);
+const PER_CHAR: Duration = Duration::from_millis(50);
 
 /// macOS speech through `/usr/bin/say`. Syntheses run concurrently (the
 /// reader prefetches one chunk ahead), each in a `say` of its own.
@@ -25,6 +29,8 @@ pub struct MacSay {
     /// Bumped by `cancel`; a synthesis that sees a newer epoch is abandoned.
     epoch: AtomicU64,
     next: AtomicU64,
+    /// The fixed part of a synthesis's time limit (`BASE_TIMEOUT`).
+    base_timeout: Duration,
     /// The `say` processes in flight, killed by `cancel` and on drop.
     running: Mutex<HashMap<u64, Child>>,
     /// The voice list, listed once (`refresh_voices` lists it again).
@@ -39,6 +45,38 @@ impl Default for MacSay {
 
 /// Removes the temp WAV however the synthesis ends.
 struct TempWav(PathBuf);
+
+impl TempWav {
+    /// A new, empty file in the temp folder that nobody else made: the name
+    /// is unique in the process (one counter for every `MacSay`) and holds
+    /// the time, and `create_new` refuses a path that exists already, a
+    /// planted symlink included.
+    fn create() -> std::io::Result<TempWav> {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let mut last = None;
+        for _ in 0..16 {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0);
+            let path = std::env::temp_dir().join(format!(
+                "sonara-say-{}-{}-{nanos:08x}.wav",
+                std::process::id(),
+                N.fetch_add(1, Ordering::SeqCst)
+            ));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(TempWav(path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| std::io::Error::other("no free temp name")))
+    }
+}
 
 impl Drop for TempWav {
     fn drop(&mut self) {
@@ -61,9 +99,16 @@ impl MacSay {
             program: program.as_ref().to_path_buf(),
             epoch: AtomicU64::new(0),
             next: AtomicU64::new(0),
+            base_timeout: BASE_TIMEOUT,
             running: Mutex::new(HashMap::new()),
             voices: Mutex::new(None),
         }
+    }
+
+    /// The engine with another fixed part of the time limit (tests).
+    pub fn with_timeout(mut self, base: Duration) -> Self {
+        self.base_timeout = base;
+        self
     }
 
     fn cannot_run(&self, e: std::io::Error) -> Error {
@@ -100,9 +145,11 @@ impl MacSay {
         let voices = self.voice_infos()?;
         let chosen = choose_voice(&voices, voice)?;
         let key = self.next.fetch_add(1, Ordering::SeqCst);
-        let out = TempWav(
-            std::env::temp_dir().join(format!("sonara-say-{}-{key}.wav", std::process::id())),
-        );
+        let out = TempWav::create()
+            .map_err(|e| Error::Engine(format!("macOS speech cannot make a temp file: {e}")))?;
+        let limit = self.base_timeout
+            + PER_CHAR.saturating_mul(u32::try_from(text.chars().count()).unwrap_or(u32::MAX));
+        let deadline = Instant::now() + limit;
         let mut cmd = Command::new(&self.program);
         if let Some(v) = chosen {
             cmd.arg("-v").arg(&v.name);
@@ -151,6 +198,17 @@ impl MacSay {
             };
             match done {
                 Some(r) => break r,
+                None if Instant::now() >= deadline => {
+                    // A hung `say` (a stuck speech server) is killed and reaped.
+                    self.kill(key);
+                    if self.epoch.load(Ordering::SeqCst) != epoch {
+                        return Err(Error::Cancelled);
+                    }
+                    return Err(Error::Engine(format!(
+                        "macOS speech did not finish in {} s",
+                        limit.as_secs()
+                    )));
+                }
                 None => std::thread::sleep(POLL),
             }
         };
@@ -165,12 +223,17 @@ impl MacSay {
             }
             return Err(classify_failure(&status.to_string(), &msg));
         }
-        std::fs::read(&out.0).map_err(|e| {
-            Error::Engine(format!(
+        match std::fs::read(&out.0) {
+            Ok(bytes) if !bytes.is_empty() => Ok(bytes),
+            Ok(_) => Err(Error::Engine(format!(
+                "macOS speech wrote no audio ({})",
+                out.0.display()
+            ))),
+            Err(e) => Err(Error::Engine(format!(
                 "macOS speech wrote no audio ({}): {e}",
                 out.0.display()
-            ))
-        })
+            ))),
+        }
     }
 
     /// Kill and reap one `say`.

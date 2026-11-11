@@ -1027,6 +1027,20 @@ mod tests {
     }
 
     #[test]
+    fn the_default_engine_is_the_os_engine() {
+        assert_eq!(
+            default("engine"),
+            Some(json!(sonara_engine::OS_ENGINE.as_str()))
+        );
+        let expected = if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "onecore"
+        };
+        assert_eq!(default("engine"), Some(json!(expected)));
+    }
+
+    #[test]
     fn every_setting_has_a_valid_default() {
         for s in SCHEMA {
             let d = default(s.key).unwrap();

@@ -507,3 +507,33 @@ async fn run(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_no_runtime_next_to_the_binary_the_os_engine_speaks_and_is_the_default() {
+        // The test binary has no onnxruntime library beside it.
+        if std::env::var_os("SONARA_ORT_DYLIB").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("sonarad-build-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = Home {
+            dir: dir.clone(),
+            is_default: false,
+        };
+        let built = build_registry(None, &home, false).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(built.default_engine, sonara_engine::OS_ENGINE.as_str());
+        assert_eq!(built.chosen, sonara_engine::OS_ENGINE.as_str());
+        assert!(built
+            .registry
+            .get(sonara_engine::OS_ENGINE.as_str())
+            .is_ok());
+        if cfg!(target_os = "macos") {
+            assert_eq!(sonara_engine::OS_ENGINE.as_str(), "macos");
+        }
+    }
+}

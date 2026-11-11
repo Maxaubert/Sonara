@@ -40,7 +40,7 @@ with the Windows speech engine or the Kokoro engine, both running locally (or, i
 selected one, with an external speech engine: see External voices). On a Mac the macOS system
 voices take the Windows engine's place: each sentence goes on its standard input to the built-in
 `/usr/bin/say`, which writes its audio to a temporary file in your user's temp folder
-(`sonara-say-<pid>-<n>.wav`), deleted as soon as it is read. Its parts talk to each
+(`sonara-say-<pid>-<n>-<time>.wav`), deleted as soon as it is read. Its parts talk to each
 other over a loopback connection (`127.0.0.1`) protected by a token stored in your profile. The
 settings page is served on the same loopback address and needs that token too.
 

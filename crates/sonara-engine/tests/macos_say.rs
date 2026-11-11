@@ -19,7 +19,7 @@ Daniel              en_GB    # Hello! My name is Daniel.
 
 /// A stand-in `say` in `dir`: lists `LISTING`, records its arguments and
 /// stdin, then does what `dir/mode` says: `ok` copies `dir/fixture.wav` to
-/// the `-o` file, `sleep` waits for good, `fail` prints an error.
+/// the `-o` file, `slow` does that after 0.4 s, `sleep` waits for good, `fail` prints an error.
 fn fake_say(dir: &Path, mode: &str) -> PathBuf {
     std::fs::write(dir.join("listing"), LISTING).unwrap();
     std::fs::write(dir.join("mode"), mode).unwrap();
@@ -42,6 +42,7 @@ while [ $# -gt 0 ]; do
 done
 case "$(cat "{d}/mode")" in
   ok) cp "{d}/fixture.wav" "$out" ;;
+  slow) sleep 0.4; cp "{d}/fixture.wav" "$out" ;;
   sleep) echo "$$" > "{d}/pid"; exec sleep 30 ;;
   fail) echo "Speaking failed: -241" >&2; exit 1 ;;
 esac
@@ -170,4 +171,67 @@ fn a_missing_say_lists_no_voice_and_says_why_it_cannot_speak() {
         other => panic!("{other:?}"),
     }
     assert!(e.warm().is_err());
+}
+
+/// A fixture WAV of its own for the stand-in `say` in `dir`.
+fn set_fixture(dir: &Path, samples: Vec<i16>) {
+    let pcm = PcmChunk {
+        samples,
+        sample_rate: 22_050,
+        channels: 1,
+    };
+    std::fs::write(dir.join("fixture.wav"), wav::encode(&pcm)).unwrap();
+}
+
+#[test]
+fn two_engines_in_one_process_never_share_a_temp_wav() {
+    // sonarad builds two (the reader's and the settings preview's); their
+    // syntheses overlap and each must read its own audio.
+    let a_dir = TempDir::new("say-two-a");
+    let b_dir = TempDir::new("say-two-b");
+    let a = MacSay::with_program(fake_say(a_dir.path(), "slow"));
+    let b = MacSay::with_program(fake_say(b_dir.path(), "slow"));
+    set_fixture(a_dir.path(), vec![10, 11]);
+    set_fixture(b_dir.path(), vec![20, 21, 22]);
+    let (ra, rb) = std::thread::scope(|s| {
+        let ha = s.spawn(|| collect(&a, "One.", "", 200));
+        let hb = s.spawn(|| collect(&b, "Two.", "", 200));
+        (ha.join().unwrap(), hb.join().unwrap())
+    });
+    assert_eq!(ra.unwrap()[0].samples, vec![10, 11]);
+    assert_eq!(rb.unwrap()[0].samples, vec![20, 21, 22]);
+    let out = |d: &Path| {
+        std::fs::read_to_string(d.join("args"))
+            .unwrap()
+            .lines()
+            .nth(5)
+            .unwrap()
+            .to_string()
+    };
+    assert_ne!(out(a_dir.path()), out(b_dir.path()));
+}
+
+#[test]
+fn a_hung_say_is_killed_at_its_time_limit() {
+    let dir = TempDir::new("say-hung");
+    let e = MacSay::with_program(fake_say(dir.path(), "sleep"))
+        .with_timeout(Duration::from_millis(200));
+    let t = Instant::now();
+    match collect(&e, "Hi.", "", 200) {
+        Err(Error::Engine(m)) => assert!(m.starts_with("macOS speech did not finish in"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    let pid = std::fs::read_to_string(dir.path().join("pid")).unwrap();
+    let alive = std::process::Command::new("/bin/kill")
+        .args(["-0", pid.trim()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success();
+    assert!(
+        !alive,
+        "say (pid {}) still runs after its time limit",
+        pid.trim()
+    );
 }
