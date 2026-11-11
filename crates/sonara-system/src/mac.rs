@@ -915,6 +915,19 @@ struct AppleScriptApp(String);
 /// What a script answers for an app that no longer runs.
 const GONE: &str = "gone";
 
+/// The end of the error `AppleScriptApp::ask` returns for a gone app.
+const NOT_RUNNING: &str = " is not running";
+
+/// Read a `playerState` answer. Only a gone app is an error; a slow or
+/// failed query is "not playing" (see `is_playing`).
+fn playing_from(answer: PResult<String>) -> PResult<bool> {
+    match answer {
+        Ok(state) => Ok(state == "playing"),
+        Err(e) if e.ends_with(NOT_RUNNING) => Err(e),
+        Err(_) => Ok(false),
+    }
+}
+
 impl AppleScriptApp {
     fn ask(&self, what: &str) -> PResult<String> {
         // The bundle id is one of `MEDIA_APPS` (no quoting needed).
@@ -924,7 +937,7 @@ impl AppleScriptApp {
         );
         let out = osascript(&script, true, CALL_TIMEOUT)?;
         if out == GONE {
-            return Err(format!("{} is not running", self.0));
+            return Err(format!("{}{NOT_RUNNING}", self.0));
         }
         Ok(out)
     }
@@ -935,8 +948,12 @@ impl MediaSession for AppleScriptApp {
         Ok(self.0.clone())
     }
 
+    /// `Err` means the app is gone, as `MediaPauser::resume` reads it. A
+    /// slow or failed query (often the first Automation prompt timing out)
+    /// is "not playing", so resume still tries `play`, which never launches
+    /// a player the user quit: never leave an app paused.
     fn is_playing(&self) -> PResult<bool> {
-        Ok(self.ask("a.playerState()")? == "playing")
+        playing_from(self.ask("a.playerState()"))
     }
 
     fn pause(&self) -> PResult<()> {
@@ -1141,5 +1158,25 @@ fn observe_power_off() {
             *name,
             std::ptr::null_mut(),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_player_whose_state_query_times_out_is_still_resumed() {
+        let timed_out = Err(format!("{TIMED_OUT} after 2000 ms"));
+        assert_eq!(playing_from(timed_out), Ok(false));
+        assert_eq!(playing_from(Err("osascript: -1743".into())), Ok(false));
+    }
+
+    #[test]
+    fn a_player_that_quit_is_not_resumed() {
+        let gone = Err(format!("com.apple.Music{NOT_RUNNING}"));
+        assert!(playing_from(gone).is_err());
+        assert_eq!(playing_from(Ok("playing".into())), Ok(true));
+        assert_eq!(playing_from(Ok("paused".into())), Ok(false));
     }
 }
