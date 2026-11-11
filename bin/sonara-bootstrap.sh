@@ -67,7 +67,7 @@ signed="sonarad sonara-hook sonara libonnxruntime.dylib"
 # SONARA_CODESIGN_REQUIREMENT replaces it for tests ("-" checks integrity
 # only), and only together with SONARA_RELEASE_BASE_URL (a test mirror):
 # a real install from GitHub always needs the Developer ID.
-requirement='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+requirement='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "WV7BY8CUM8"'
 if [ -n "$SONARA_RELEASE_BASE_URL" ] && [ -n "$SONARA_CODESIGN_REQUIREMENT" ]; then
     requirement="$SONARA_CODESIGN_REQUIREMENT"
 fi

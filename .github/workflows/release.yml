@@ -260,7 +260,7 @@ jobs:
             codesign --verify --strict --verbose=2 "$p"
             codesign -dv "$p" 2>&1 | grep -q "TeamIdentifier=$APPLE_TEAM_ID" || { echo "::error::$f is not signed by the team"; exit 1; }
             # The requirement the plugin's bootstrap checks (Developer ID).
-            codesign --verify --strict -R='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$p" || { echo "::error::$f fails the bootstrap's Developer ID requirement"; exit 1; }
+            codesign --verify --strict -R='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "WV7BY8CUM8"' "$p" || { echo "::error::$f fails the bootstrap's Developer ID requirement"; exit 1; }
             codesign -dv "$p" 2>&1 | grep -q "flags=.*runtime" || { echo "::error::$f lacks the hardened runtime"; exit 1; }
           done
           # sonarad: Apple Events allowed (media pause), library validation on.

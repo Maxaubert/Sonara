@@ -157,6 +157,7 @@ def test_the_release_checks_the_requirement_the_bootstrap_enforces():
     boot = (REPO / "bin" / "sonara-bootstrap.sh").read_text(encoding="utf-8")
     req = re.search(r"^requirement='([^']+)'$", boot, re.M).group(1)
     assert "certificate leaf[field.1.2.840.113635.100.6.1.13]" in req  # Developer ID Application
+    assert 'certificate leaf[subject.OU] = "WV7BY8CUM8"' in req  # Sonara's team only
     release = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "-R='" + req + "'" in release
 
