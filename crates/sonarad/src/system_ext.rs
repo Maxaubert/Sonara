@@ -665,7 +665,13 @@ impl SystemExt {
         if !self.is_enabled() {
             return Err((404, "the settings page needs the system extension"));
         }
-        crate::settings_page::render(host, query, self.http_port, &self.token)
+        crate::settings_page::render_for(
+            host,
+            query,
+            self.http_port,
+            &self.token,
+            crate::settings_page::PagePlatform::this_os(self.platform.duck),
+        )
     }
 
     fn lock_holds(&self) -> std::sync::MutexGuard<'_, Holds> {

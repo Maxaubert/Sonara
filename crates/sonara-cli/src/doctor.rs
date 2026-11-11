@@ -138,20 +138,48 @@ fn ctrl_alt_arrow(combo: &str) -> bool {
         .any(|k| combo == format!("Ctrl+Alt+{k}"))
 }
 
+/// Said once on macOS when a Ctrl chord with an arrow is taken: Mission
+/// Control and Spaces use Ctrl+arrows.
+pub const MISSION_CONTROL: &str = "macOS may use it for Mission Control or Spaces: change that \
+in System Settings, Keyboard, Keyboard Shortcuts, or rebind with Cmd in the settings page";
+
+/// Said on macOS while a hotkey is Ctrl+Option (the defaults, user decision
+/// 2026-11-11): VoiceOver's modifier.
+pub const VOICEOVER: &str = "Ctrl+Option is the VoiceOver modifier: if you use VoiceOver, \
+rebind with Cmd in the settings page";
+
+/// A Ctrl chord (not Cmd) on an arrow, as macOS writes it.
+fn ctrl_arrow(combo: &str) -> bool {
+    combo.starts_with("Ctrl+")
+        && !combo.contains("Cmd")
+        && ["Up", "Down", "Left", "Right"]
+            .iter()
+            .any(|k| combo.ends_with(&format!("+{k}")))
+}
+
 /// The hotkeys row from `get hotkeys`.
 pub fn hotkeys_row(h: &Value) -> Row {
+    hotkeys_row_for(h, cfg!(target_os = "macos"))
+}
+
+/// `hotkeys_row` with the texts of macOS (`mac`) or Windows.
+pub fn hotkeys_row_for(h: &Value, mac: bool) -> Row {
     let bindings = h["bindings"].as_array().cloned().unwrap_or_default();
     let mut bound = Vec::new();
     let mut problems = Vec::new();
     let mut rotation = false;
+    let mut mission_control = false;
+    let mut voiceover = false;
     for b in &bindings {
         let (Some(action), Some(combo)) = (b["action"].as_str(), b["combo"].as_str()) else {
             continue;
         };
         bound.push(format!("{combo} {action}"));
+        voiceover |= mac && combo.starts_with("Ctrl+Option+") && !combo.contains("Cmd");
         if b["error"].as_str() == Some("already_owned") {
             problems.push(format!("{combo} is taken by another program"));
-            rotation |= ctrl_alt_arrow(combo);
+            rotation |= !mac && ctrl_alt_arrow(combo);
+            mission_control |= mac && ctrl_arrow(combo);
         } else if b["error"].as_str() == Some("bound_twice") {
             // #43: one of our own actions holds the chord.
             let other = b["taken_by"].as_str().unwrap_or("another action");
@@ -170,6 +198,9 @@ pub fn hotkeys_row(h: &Value) -> Row {
     if rotation {
         problems.push(INTEL_ROTATION.to_string());
     }
+    if mission_control {
+        problems.push(MISSION_CONTROL.to_string());
+    }
     for p in h["problems"].as_array().into_iter().flatten() {
         problems.push(format!("keymap.json: {}", p.as_str().unwrap_or("?")));
     }
@@ -181,11 +212,14 @@ pub fn hotkeys_row(h: &Value) -> Row {
     } else {
         " (not registered now)"
     };
-    let list = if bound.is_empty() {
+    let mut list = if bound.is_empty() {
         "none bound".to_string()
     } else {
         bound.join(", ")
     };
+    if voiceover {
+        list = format!("{list} ({VOICEOVER})");
+    }
     let status = if h["active"] == true {
         Status::Ok
     } else {
@@ -196,6 +230,28 @@ pub fn hotkeys_row(h: &Value) -> Row {
 
 /// The audio row from `audio_mode` and `duck_level`.
 pub fn audio_row(mode: &Value, level: &Value) -> Row {
+    audio_row_for(mode, level, cfg!(target_os = "macos"))
+}
+
+/// `audio_row` as on macOS (`mac`: no duck, and pause reaches only the
+/// scriptable players) or Windows.
+pub fn audio_row_for(mode: &Value, level: &Value, mac: bool) -> Row {
+    if mac {
+        return match mode.as_str() {
+            Some("duck") => Row::new(
+                Status::Warn,
+                "audio",
+                "ducking is not available on macOS: Music and Spotify are paused instead \
+                 (choose Pause or Off in the settings page)",
+            ),
+            Some("pause") => Row::new(
+                Status::Info,
+                "audio",
+                "Music and Spotify are paused while Sonara speaks (other media is left alone)",
+            ),
+            _ => audio_row_for(mode, level, false),
+        };
+    }
     let detail = match mode.as_str() {
         Some("pause") => "media apps are paused while Sonara speaks".to_string(),
         Some("duck") => format!(
@@ -257,7 +313,7 @@ mod tests {
         let ok = json!({"active": true, "bindings": [
             {"action": "restart", "combo": "Ctrl+Alt+Up", "registered": true, "error": null, "altgr": null},
             {"action": "pause", "combo": null}], "problems": []});
-        let r = hotkeys_row(&ok);
+        let r = hotkeys_row_for(&ok, false);
         assert_eq!(
             (r.status, r.detail.as_str()),
             (Status::Ok, "Ctrl+Alt+Up restart")
@@ -266,7 +322,7 @@ mod tests {
             {"action": "mute", "combo": "Ctrl+Alt+M", "registered": true, "error": null, "altgr": "µ"},
             {"action": "flush", "combo": "Ctrl+Alt+Down", "registered": false, "error": "already_owned", "altgr": null}],
             "problems": []});
-        let r = hotkeys_row(&bad);
+        let r = hotkeys_row_for(&bad, false);
         assert_eq!(r.status, Status::Warn);
         assert!(
             r.detail.contains("AltGr") && r.detail.contains("taken"),
@@ -298,7 +354,7 @@ mod tests {
             {"action": "previous_question", "combo": "Ctrl+Alt+Left", "error": "already_owned"},
             {"action": "next_question", "combo": "Ctrl+Alt+Right", "error": "already_owned"}],
             "problems": []});
-        let r = hotkeys_row(&h);
+        let r = hotkeys_row_for(&h, false);
         assert_eq!(r.status, Status::Warn);
         assert_eq!(
             r.detail.matches("Intel Graphics Command Center").count(),
@@ -311,12 +367,47 @@ mod tests {
             {"action": "mute", "combo": "Ctrl+Alt+M", "error": "already_owned"},
             {"action": "next_question", "combo": "Win+Ctrl+Alt+Right", "error": "already_owned"}],
             "problems": []});
-        assert!(!hotkeys_row(&h).detail.contains("Intel"));
+        assert!(!hotkeys_row_for(&h, false).detail.contains("Intel"));
+    }
+
+    #[test]
+    fn macos_hotkeys_name_voiceover_and_mission_control_not_intel() {
+        let ok = json!({"active": true, "bindings": [
+            {"action": "restart", "combo": "Ctrl+Option+Up", "registered": true, "error": null}],
+            "problems": []});
+        let r = hotkeys_row_for(&ok, true);
+        assert_eq!(r.status, Status::Ok, "a note, not a warning");
+        assert!(r
+            .detail
+            .starts_with("Ctrl+Option+Up restart (Ctrl+Option is the VoiceOver"));
+        let cmd = json!({"active": true, "bindings": [
+            {"action": "restart", "combo": "Ctrl+Option+Cmd+Up", "error": null}], "problems": []});
+        assert!(!hotkeys_row_for(&cmd, true).detail.contains("VoiceOver"));
+        let taken = json!({"active": true, "bindings": [
+            {"action": "flush", "combo": "Ctrl+Option+Down", "error": "already_owned"}],
+            "problems": []});
+        let r = hotkeys_row_for(&taken, true);
+        assert_eq!(r.status, Status::Warn);
+        assert!(r.detail.contains("Mission Control"), "{}", r.detail);
+        assert!(!r.detail.contains("Intel"), "{}", r.detail);
+    }
+
+    #[test]
+    fn macos_audio_says_duck_is_unavailable_and_what_pause_reaches() {
+        let r = audio_row_for(&json!("duck"), &json!(40), true);
+        assert_eq!(r.status, Status::Warn);
+        assert!(r.detail.contains("not available on macOS"), "{}", r.detail);
+        let r = audio_row_for(&json!("pause"), &json!(30), true);
+        assert!(r.detail.contains("Music and Spotify"), "{}", r.detail);
+        assert_eq!(
+            audio_row_for(&json!("off"), &json!(30), true).status,
+            Status::Info
+        );
     }
 
     #[test]
     fn the_audio_mode_is_described() {
-        assert!(audio_row(&json!("duck"), &json!(40))
+        assert!(audio_row_for(&json!("duck"), &json!(40), false)
             .detail
             .contains("40 %"));
         assert!(audio_row(&json!("pause"), &json!(30))

@@ -52,13 +52,23 @@ fn main() -> ExitCode {
             return ExitCode::from(EXIT_USAGE);
         }
     };
-    match start(args) {
+    match on_worker(move || start(args)) {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, message)) => {
             eprintln!("sonarad: {message}");
             ExitCode::from(code)
         }
     }
+}
+
+/// Run the runtime. On macOS the main thread runs the Carbon event pump
+/// (hotkeys and the power-off notification arrive only there) and the
+/// runtime runs on a worker thread; elsewhere it runs here.
+fn on_worker<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    #[cfg(target_os = "macos")]
+    return sonara_system::mac::run_main(f);
+    #[cfg(not(target_os = "macos"))]
+    f()
 }
 
 /// `onnxruntime.dll` next to `sonarad.exe`; `SONARA_ORT_DYLIB` overrides
@@ -219,9 +229,11 @@ fn system_platform(kind: SystemKind, home: &Home) -> Option<sonara_system::Platf
             Some(sonara_system::fake::Fake::file(home.dir.join("fake-system.json")).platform())
         }
         #[cfg(windows)]
-        SystemKind::Windows => Some(sonara_system::win::platform()),
-        #[cfg(not(windows))]
-        SystemKind::Windows => None,
+        SystemKind::Os => Some(sonara_system::win::platform()),
+        #[cfg(target_os = "macos")]
+        SystemKind::Os => Some(sonara_system::mac::platform()),
+        #[cfg(not(any(windows, target_os = "macos")))]
+        SystemKind::Os => None,
     }
 }
 

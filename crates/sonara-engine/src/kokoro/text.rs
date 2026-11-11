@@ -169,11 +169,16 @@ pub fn normalize(text: &str) -> String {
     t = re(&FLAG, r"(^|\s)--([a-z])")
         .replace_all(&t, "${1}dash dash $2")
         .into_owned();
-    // Ctrl+Alt+M -> Control Alt M.
-    t = re(&KEYS, r"\b(Ctrl|Alt|Shift|Win)\+")
+    // Ctrl+Alt+M -> Control Alt M; macOS: Ctrl+Option+Cmd+M -> Control
+    // Option Command M.
+    t = re(&KEYS, r"\b(Ctrl|Alt|Option|Shift|Win|Cmd)\+")
         .replace_all(&t, |c: &Captures| {
-            let k = &c[1];
-            format!("{} ", if k == "Ctrl" { "Control" } else { k })
+            let k = match &c[1] {
+                "Ctrl" => "Control",
+                "Cmd" => "Command",
+                k => k,
+            };
+            format!("{k} ")
         })
         .into_owned();
     // name.ext -> name dot <ext>.
@@ -256,6 +261,15 @@ mod tests {
             "C drive slash Users slash me and D drive slash data"
         );
         assert_eq!(normalize("Cargo.toml"), "Cargo dot toml");
+    }
+
+    #[test]
+    fn a_macos_chord_is_read_as_words() {
+        // The macOS labels (keymap::Labels::Mac) in the step hint.
+        assert_eq!(
+            normalize("Use Ctrl+Option+Down, or Option+Cmd+P"),
+            "Use Control Option Down, or Option Command P"
+        );
     }
 
     #[test]

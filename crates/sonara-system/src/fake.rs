@@ -116,6 +116,10 @@ pub struct World {
     /// Keys held down now (virtual-key codes, #299).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub down: Vec<u32>,
+    /// A platform that cannot duck (as macOS): read when the platform is
+    /// made (`Platform::duck`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub no_duck: bool,
 }
 
 enum Press {
@@ -296,6 +300,7 @@ impl Fake {
         let e = self.clone();
         Platform {
             name: "fake",
+            duck: !self.world().no_duck,
             audio: Arc::new(move || {
                 Box::new(FakeAudioSessions(a.clone())) as Box<dyn AudioSessions>
             }),

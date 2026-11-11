@@ -25,7 +25,8 @@ pub struct CodeReading {
     pub pause_ms: u32,
     /// Wait after a block's announcement and after each line.
     pub step: bool,
-    /// The next-line key as the step hint says it ("Ctrl+Alt+Right").
+    /// The next-line key as the step hint says it ("Ctrl+Alt+Right";
+    /// "Ctrl+Option+Right" on macOS).
     pub next_key: String,
 }
 
@@ -35,7 +36,13 @@ impl Default for CodeReading {
             speed: 80,
             pause_ms: 500,
             step: false,
-            next_key: "Ctrl+Alt+Right".into(),
+            // As `keymap::combo_label` writes it on this platform.
+            next_key: if cfg!(target_os = "macos") {
+                "Ctrl+Option+Right"
+            } else {
+                "Ctrl+Alt+Right"
+            }
+            .into(),
         }
     }
 }

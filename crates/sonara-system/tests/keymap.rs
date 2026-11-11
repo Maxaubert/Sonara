@@ -11,6 +11,13 @@ fn key_of(km: &keymap::Keymap, a: Action) -> Option<String> {
     km.get(a).key.clone()
 }
 
+/// How this platform writes Ctrl+Alt: macOS calls Alt Option.
+const CA: &str = if cfg!(target_os = "macos") {
+    "Ctrl+Option"
+} else {
+    "Ctrl+Alt"
+};
+
 fn mods(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
@@ -59,11 +66,11 @@ fn the_section_keys_can_be_held() {
     let km = keymap::defaults();
     let (r, _) = keymap::resolve(&km);
     let down = r.iter().find(|r| r.action == Action::Flush).unwrap();
-    assert_eq!(keymap::combo_label(down.mods, down.vk), "Ctrl+Alt+Down");
     assert_eq!(
-        keymap::next_section_label(&km).as_deref(),
-        Some("Ctrl+Alt+Down")
+        keymap::combo_label(down.mods, down.vk),
+        format!("{CA}+Down")
     );
+    assert_eq!(keymap::next_section_label(&km), Some(format!("{CA}+Down")));
     assert!(!Action::NextQuestion.debounced() && !Action::PreviousQuestion.debounced());
     for a in [
         Action::Restart,
@@ -235,7 +242,7 @@ fn bind_refuses_a_chord_another_action_already_uses() {
     // #43: both would be registered and the second never fires.
     let path = tmp("km-dup").join("keymap.json");
     let e = keymap::bind(&path, Action::Faster, "M", &mods(&["Alt", "control"])).unwrap_err();
-    assert!(e.contains("Ctrl+Alt+M") && e.contains("mute"), "{e}");
+    assert!(e.contains(&format!("{CA}+M")) && e.contains("mute"), "{e}");
     assert!(!path.exists(), "nothing persisted");
     keymap::bind(&path, Action::Faster, "f", &mods(&["ctrl", "alt"])).unwrap();
     let e = keymap::bind(&path, Action::Slower, "f", &mods(&["alt", "ctrl"])).unwrap_err();
@@ -290,17 +297,37 @@ fn reset_restores_the_defaults() {
 
 #[test]
 fn combo_labels_read_like_windows() {
+    let w = keymap::Labels::Windows;
     let ca = keymap::MOD_CTRL | keymap::MOD_ALT;
-    assert_eq!(keymap::combo_label(ca, 0x26), "Ctrl+Alt+Up");
+    assert_eq!(keymap::combo_label_for(w, ca, 0x26), "Ctrl+Alt+Up");
     assert_eq!(
-        keymap::combo_label(keymap::MOD_WIN | keymap::MOD_ALT, 0x24),
+        keymap::combo_label_for(w, keymap::MOD_WIN | keymap::MOD_ALT, 0x24),
         "Win+Alt+Home"
     );
     assert_eq!(
-        keymap::combo_label(ca | keymap::MOD_SHIFT, 0x4D),
+        keymap::combo_label_for(w, ca | keymap::MOD_SHIFT, 0x4D),
         "Ctrl+Shift+Alt+M"
     );
-    assert_eq!(keymap::combo_label(ca, 0x37), "Ctrl+Alt+7");
+    assert_eq!(keymap::combo_label_for(w, ca, 0x37), "Ctrl+Alt+7");
+}
+
+#[test]
+fn combo_labels_read_like_macos_in_words() {
+    // Alt is Option and Win is Cmd, in the order macOS menus list them
+    // (Control, Option, Shift, Command); words, not glyphs, so speech
+    // reads them.
+    let m = keymap::Labels::Mac;
+    let ca = keymap::MOD_CTRL | keymap::MOD_ALT;
+    assert_eq!(keymap::combo_label_for(m, ca, 0x26), "Ctrl+Option+Up");
+    assert_eq!(
+        keymap::combo_label_for(m, keymap::MOD_WIN | keymap::MOD_ALT, 0x24),
+        "Option+Cmd+Home"
+    );
+    assert_eq!(
+        keymap::combo_label_for(m, ca | keymap::MOD_SHIFT | keymap::MOD_WIN, 0x4D),
+        "Ctrl+Option+Shift+Cmd+M"
+    );
+    assert_eq!(keymap::combo_label(ca, 0x28), format!("{CA}+Down"));
 }
 
 #[test]
@@ -320,7 +347,7 @@ fn altgr_conflicts_flag_ctrl_alt_hotkeys_that_type_a_character() {
     let found = keymap::altgr_conflicts(&r, layout.as_ref());
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].action, Action::Mute);
-    assert_eq!(found[0].combo, "Ctrl+Alt+M");
+    assert_eq!(found[0].combo, format!("{CA}+M"));
     assert_eq!(found[0].character, "\u{b5}");
     let path = tmp("km-altgr").join("keymap.json");
     keymap::bind(&path, Action::Mute, "m", &mods(&["ctrl", "alt", "win"])).unwrap();

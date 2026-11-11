@@ -8,6 +8,10 @@
 //! defaults, unknown actions are ignored, and an entry naming a key or
 //! modifier this table lacks is reported and skipped instead of taking
 //! every hotkey down (#38). `bind` validates before anything is written.
+//!
+//! The Windows virtual-key codes and `MOD_*` bits are the internal ids on
+//! every platform (macOS translates them when it registers, `crate::mac`),
+//! so `keymap.json` is the same everywhere; only the labels differ.
 use crate::platform::KeyboardLayout;
 use crate::state_file;
 use serde::{Deserialize, Serialize};
@@ -134,7 +138,10 @@ pub const MOD_WIN: u32 = 0x0008;
 
 /// The default chord (#160, user decision 2026-10-02): Ctrl+Alt. Windows
 /// owns Win+Alt+Up/Down/M/P. Ctrl+Alt is AltGr on many European layouts,
-/// so a clash is a warning whose fix is a rebind with Win.
+/// so a clash is a warning whose fix is a rebind with Win. macOS uses the
+/// same chord, Ctrl+Option (user decision 2026-11-11); it is VoiceOver's
+/// modifier, so the settings page and doctor say to rebind with Cmd when
+/// VoiceOver is in use.
 pub const DEFAULT_MODS: [&str; 2] = ["ctrl", "alt"];
 
 /// Action -> default key; pause, faster, slower and the Left/Right
@@ -180,6 +187,7 @@ const NAMED_KEYS: &[(&str, u32)] = &[
 
 const MODS: &[(&str, u32)] = &[
     ("alt", MOD_ALT),
+    ("option", MOD_ALT),
     ("ctrl", MOD_CTRL),
     ("control", MOD_CTRL),
     ("shift", MOD_SHIFT),
@@ -279,7 +287,8 @@ fn default_binding(action: Action) -> Binding {
         .unwrap_or_default()
 }
 
-/// The default keymap: Ctrl+Alt+Up/Down/M/P, the rest unbound.
+/// The default keymap: Ctrl+Alt+Up/Down/M/P (Ctrl+Option on macOS), the
+/// rest unbound.
 pub fn defaults() -> Keymap {
     Keymap {
         bindings: Action::ALL
@@ -401,11 +410,13 @@ pub fn bind(path: &Path, action: Action, key: &str, mods: &[String]) -> Result<(
         }
     }
     if held & (MOD_CTRL | MOD_ALT | MOD_WIN) == 0 {
-        return Err(
-            "a hotkey needs Ctrl, Alt or Win: without one it would take that key away \
-                    from every app"
-                .into(),
-        );
+        let needed = match Labels::OS {
+            Labels::Windows => "Ctrl, Alt or Win",
+            Labels::Mac => "Ctrl, Option or Cmd",
+        };
+        return Err(format!(
+            "a hotkey needs {needed}: without one it would take that key away from every app"
+        ));
     }
     // Two actions on one chord: the second would never fire, and Windows
     // reports it like a chord another program owns (#43).
@@ -465,18 +476,53 @@ pub fn label(km: &Keymap, action: Action) -> Option<String> {
         .map(|r| combo_label(r.mods, r.vk))
 }
 
-/// How a chord reads: `Ctrl+Alt+Up` (Win first, as Windows writes it).
+/// How chords are written: as Windows writes them, or as macOS does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Labels {
+    /// `Win+Ctrl+Shift+Alt+Up` (Win first).
+    Windows,
+    /// `Ctrl+Option+Shift+Cmd+Up`: Alt is Option and Win is Cmd, in the
+    /// order macOS menus list them. Words, not the menu glyphs, so speech
+    /// and screen readers read them.
+    Mac,
+}
+
+impl Labels {
+    /// The style of the platform this runtime was built for.
+    pub const OS: Labels = if cfg!(target_os = "macos") {
+        Labels::Mac
+    } else {
+        Labels::Windows
+    };
+}
+
+/// How a chord reads on this platform: `Ctrl+Alt+Up` on Windows,
+/// `Ctrl+Option+Up` on macOS.
 pub fn combo_label(mods: u32, vk: u32) -> String {
-    let mut parts: Vec<String> = [
-        (MOD_WIN, "Win"),
-        (MOD_CTRL, "Ctrl"),
-        (MOD_SHIFT, "Shift"),
-        (MOD_ALT, "Alt"),
-    ]
-    .iter()
-    .filter(|(m, _)| mods & m != 0)
-    .map(|(_, n)| n.to_string())
-    .collect();
+    combo_label_for(Labels::OS, mods, vk)
+}
+
+/// How a chord reads in `style`.
+pub fn combo_label_for(style: Labels, mods: u32, vk: u32) -> String {
+    let order: [(u32, &str); 4] = match style {
+        Labels::Windows => [
+            (MOD_WIN, "Win"),
+            (MOD_CTRL, "Ctrl"),
+            (MOD_SHIFT, "Shift"),
+            (MOD_ALT, "Alt"),
+        ],
+        Labels::Mac => [
+            (MOD_CTRL, "Ctrl"),
+            (MOD_ALT, "Option"),
+            (MOD_SHIFT, "Shift"),
+            (MOD_WIN, "Cmd"),
+        ],
+    };
+    let mut parts: Vec<String> = order
+        .iter()
+        .filter(|(m, _)| mods & m != 0)
+        .map(|(_, n)| n.to_string())
+        .collect();
     let named = [
         (0xBE, "."),
         (0xDD, "]"),
