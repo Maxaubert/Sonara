@@ -69,8 +69,10 @@ impl ErrorReporter {
     }
 }
 
-/// An open output stream: what sinks connect to.
-trait Stream: Send {
+/// An open output stream: what sinks connect to. Not `Send`: CoreAudio's
+/// stream is not, so a stream is opened and dropped on the output thread
+/// only (the worker is built there too).
+trait Stream {
     fn mixer(&self) -> &Mixer;
 }
 
@@ -196,25 +198,28 @@ impl RodioOutput {
     fn with_endpoint(endpoint: Box<dyn Endpoint>, log: LogHook) -> (Self, Receiver<AudioEvent>) {
         let (events, events_rx) = channel();
         let (cmds, cmds_rx) = channel();
-        let worker = Worker {
-            endpoint,
-            log,
-            cmds: cmds.clone(),
-            events: events.clone(),
-            stream: None,
-            opened_on: None,
-            followed: false,
-            stream_no: 0,
-            sink: None,
-            loaded: None,
-            awaiting_finish: false,
-            volume: 1.0,
-            dump: Dump::from_env(),
-        };
+        let (worker_cmds, worker_events) = (cmds.clone(), events.clone());
         // If the thread cannot start, every play fails (see `send`).
         let _ = thread::Builder::new()
             .name("sonara-audio".into())
-            .spawn(move || worker.run(cmds_rx));
+            .spawn(move || {
+                let worker = Worker {
+                    endpoint,
+                    log,
+                    cmds: worker_cmds,
+                    events: worker_events,
+                    stream: None,
+                    opened_on: None,
+                    followed: false,
+                    stream_no: 0,
+                    sink: None,
+                    loaded: None,
+                    awaiting_finish: false,
+                    volume: 1.0,
+                    dump: Dump::from_env(),
+                };
+                worker.run(cmds_rx)
+            });
         (RodioOutput { cmds, events }, events_rx)
     }
 
