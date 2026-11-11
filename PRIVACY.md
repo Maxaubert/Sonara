@@ -61,8 +61,9 @@ other text Sonara reads.
 On a Mac, with Other apps set to Pause or Duck, Sonara asks macOS which app is in Now Playing
 each time it starts and stops speaking: the app's bundle id, the title shown there and whether it
 plays, read by a short script that Apple's `/usr/bin/osascript` runs. It pauses that app only while
-it plays and later resumes it only if the same title is still there and paused. The title is held
-in memory for that comparison only, never stored or logged; `pause_state.json` and the log name the
+it plays and later resumes it only if the same title is still there and paused. After a resume that
+failed, or after a crash, only the app's bundle id is kept, so Sonara then resumes whatever that app
+has paused in Now Playing. The title is held in memory for that comparison only, never stored or logged; `pause_state.json` and the log name the
 app's bundle id.
 
 The reading history Sonara uses for restart, summaries waiting to be read and each session's

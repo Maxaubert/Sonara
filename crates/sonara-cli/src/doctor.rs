@@ -271,7 +271,8 @@ pub fn now_playing_row_for(probe: Result<(), String>) -> Row {
         Ok(()) => Row::new(
             Status::Ok,
             "now playing",
-            "the Now Playing app can be paused (through osascript, no permission prompt)",
+            "MediaRemote loads through osascript, so the Now Playing app can be paused \
+             (no permission prompt; this checks it loads, not that macOS answers)",
         ),
         Err(e) => Row::new(
             Status::Warn,

@@ -1003,30 +1003,32 @@ impl MediaSessions for MacMedia {
                 .unwrap_or_else(|_| Err("listing the media apps panicked".into()));
             (apps, now)
         });
+        let apps = apps.map(|ids| {
+            ids.into_iter()
+                .map(|id| Box::new(AppleScriptApp(id)) as Box<dyn MediaSession>)
+                .collect()
+        });
         merge_sessions(apps, now, &self.now)
     }
 }
 
-/// The sessions of both paths; an error only when both failed.
+/// The sessions of both paths; an error only when both failed. The Now
+/// Playing session comes first: the pauser resumes in this order, and
+/// resuming Music or Spotify first would make it the Now Playing app, so
+/// the browser that was paused would read as gone and stay paused.
 fn merge_sessions(
-    apps: PResult<Vec<String>>,
+    apps: PResult<Vec<Box<dyn MediaSession>>>,
     now: PResult<Option<Snapshot>>,
     np: &NowPlayingMedia,
 ) -> PResult<Vec<Box<dyn MediaSession>>> {
     if let (Err(a), Err(n)) = (&apps, &now) {
         return Err(format!("{a}; Now Playing: {n}"));
     }
-    let mut out: Vec<Box<dyn MediaSession>> = match apps {
-        Ok(ids) => ids
-            .into_iter()
-            .map(|id| Box::new(AppleScriptApp(id)) as Box<dyn MediaSession>)
-            .collect(),
-        Err(e) => {
-            eprintln!("sonara-system: [pause] cannot list Music and Spotify: {e}");
-            Vec::new()
-        }
-    };
-    out.extend(np.sessions_from(now));
+    let mut out = np.sessions_from(now);
+    match apps {
+        Ok(apps) => out.extend(apps),
+        Err(e) => eprintln!("sonara-system: [pause] cannot list Music and Spotify: {e}"),
+    }
     Ok(out)
 }
 
@@ -1243,6 +1245,37 @@ mod tests {
         )
     }
 
+    /// A fake AppleScript player (no real `osascript`).
+    struct Player {
+        id: &'static str,
+        on_play: Option<Box<dyn Fn() + Send + Sync>>,
+    }
+
+    impl MediaSession for Player {
+        fn app_id(&self) -> PResult<String> {
+            Ok(self.id.into())
+        }
+        fn is_playing(&self) -> PResult<bool> {
+            Ok(false)
+        }
+        fn pause(&self) -> PResult<()> {
+            Ok(())
+        }
+        fn play(&self) -> PResult<()> {
+            if let Some(f) = &self.on_play {
+                f();
+            }
+            Ok(())
+        }
+    }
+
+    fn apps(ids: &[&'static str]) -> PResult<Vec<Box<dyn MediaSession>>> {
+        Ok(ids
+            .iter()
+            .map(|id| Box::new(Player { id, on_play: None }) as Box<dyn MediaSession>)
+            .collect())
+    }
+
     fn ids(s: &[Box<dyn MediaSession>]) -> Vec<String> {
         s.iter().map(|s| s.app_id().unwrap()).collect()
     }
@@ -1250,15 +1283,15 @@ mod tests {
     #[test]
     fn both_paths_are_listed_together() {
         let np = no_run();
-        let s = merge_sessions(Ok(vec!["com.apple.Music".into()]), chrome(), &np).unwrap();
-        assert_eq!(ids(&s), ["com.apple.Music", "com.google.Chrome"]);
+        let s = merge_sessions(apps(&["com.apple.Music"]), chrome(), &np).unwrap();
+        assert_eq!(ids(&s), ["com.google.Chrome", "com.apple.Music"]);
     }
 
     #[test]
     fn now_playing_unavailable_falls_back_to_applescript() {
         let np = no_run();
         let s = merge_sessions(
-            Ok(vec!["com.spotify.client".into()]),
+            apps(&["com.spotify.client"]),
             Err("MediaRemote did not load".into()),
             &np,
         )
@@ -1266,6 +1299,118 @@ mod tests {
         assert_eq!(ids(&s), ["com.spotify.client"]);
         let s = merge_sessions(Err(format!("{TIMED_OUT} after 2000 ms")), chrome(), &np).unwrap();
         assert_eq!(ids(&s), ["com.google.Chrome"]);
+    }
+
+    /// Music and a video in Chrome both play, Chrome is the Now Playing
+    /// app. Playing Music makes Music the Now Playing app.
+    #[derive(Default)]
+    struct World {
+        now: String,
+        chrome_playing: bool,
+        music_playing: bool,
+        sent: Vec<String>,
+    }
+
+    struct Music(std::sync::Arc<Mutex<World>>);
+
+    impl MediaSession for Music {
+        fn app_id(&self) -> PResult<String> {
+            Ok("com.apple.Music".into())
+        }
+        fn is_playing(&self) -> PResult<bool> {
+            Ok(self.0.lock().unwrap().music_playing)
+        }
+        fn pause(&self) -> PResult<()> {
+            self.0.lock().unwrap().music_playing = false;
+            Ok(())
+        }
+        fn play(&self) -> PResult<()> {
+            let mut w = self.0.lock().unwrap();
+            w.music_playing = true;
+            w.now = "com.apple.Music".into();
+            w.sent.push("music play".into());
+            Ok(())
+        }
+    }
+
+    struct Both {
+        world: std::sync::Arc<Mutex<World>>,
+        np: NowPlayingMedia,
+    }
+
+    impl MediaSessions for Both {
+        fn sessions(&self) -> PResult<Vec<Box<dyn MediaSession>>> {
+            let apps: Vec<Box<dyn MediaSession>> = vec![Box::new(Music(self.world.clone()))];
+            merge_sessions(Ok(apps), self.np.read(), &self.np)
+        }
+    }
+
+    fn both_playing() -> (std::sync::Arc<Mutex<World>>, Both) {
+        let world = std::sync::Arc::new(Mutex::new(World {
+            now: "com.google.Chrome".into(),
+            chrome_playing: true,
+            music_playing: true,
+            ..World::default()
+        }));
+        let w = world.clone();
+        let run = std::sync::Arc::new(move |script: &str| -> PResult<String> {
+            let mut w = w.lock().unwrap();
+            let state = |w: &World| {
+                if w.now == "com.apple.Music" {
+                    (w.music_playing, "A song")
+                } else {
+                    (w.chrome_playing, "A video")
+                }
+            };
+            let (playing, title) = state(&w);
+            let snap = serde_json::json!({
+                "app": w.now, "title": title,
+                "state": if playing { 1 } else { 2 }, "isPlaying": playing,
+            });
+            let chrome = w.now == "com.google.Chrome";
+            let (tried, sent) = if script.contains("decide('pause'") && chrome && playing {
+                w.chrome_playing = false;
+                w.sent.push("chrome pause".into());
+                (true, true)
+            } else if script.contains("decide('play'") && chrome && !playing {
+                w.chrome_playing = true;
+                w.sent.push("chrome play".into());
+                (true, true)
+            } else {
+                (false, false)
+            };
+            Ok(
+                serde_json::json!({"ok": true, "now": snap, "tried": tried, "sent": sent})
+                    .to_string(),
+            )
+        });
+        let np = NowPlayingMedia::with(run, "", MEDIA_APPS);
+        (world.clone(), Both { world, np })
+    }
+
+    #[test]
+    fn a_paused_browser_is_resumed_even_when_music_was_paused_too() {
+        let (world, both) = both_playing();
+        let dir = std::env::temp_dir().join(format!(
+            "sonara-mac-both-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut p = crate::pausing::MediaPauser::new(Box::new(both), dir.join("pause_state.json"));
+        p.pause();
+        {
+            let w = world.lock().unwrap();
+            assert!(!w.chrome_playing && !w.music_playing, "both paused");
+        }
+        p.resume();
+        let w = world.lock().unwrap();
+        assert!(w.chrome_playing, "Chrome resumed: {:?}", w.sent);
+        assert!(w.music_playing, "Music resumed: {:?}", w.sent);
+        assert_eq!(w.sent, ["chrome pause", "chrome play", "music play"]);
+        drop(w);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

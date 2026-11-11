@@ -103,7 +103,8 @@ function decide(mode, want) {
     out.why = String(e);
     return out;
   }
-  if (!out.sent) return out;
+  // Polled even when MediaRemote said no: the command may have worked.
+  if (!out.tried) return out;
   try {
     for (var i = 0; i < 6; i++) {
       b.wait(0.05);
@@ -152,6 +153,21 @@ struct Answer {
     tried: bool,
     #[serde(default)]
     sent: bool,
+    /// The media after a command (polled until it took effect).
+    #[serde(default)]
+    after: Option<Snapshot>,
+}
+
+impl Answer {
+    /// A command was tried and the same media is now in the state it
+    /// asked for, whatever MediaRemote's answer was.
+    fn took(&self, want: &Snapshot, playing: bool) -> bool {
+        self.tried
+            && self
+                .after
+                .as_ref()
+                .is_some_and(|a| a.same(want) && a.playing() == playing)
+    }
 }
 
 /// What a script is asked to do.
@@ -184,7 +200,13 @@ impl Inner {
             self.backend
         );
         let out = (self.run)(&script)?;
-        serde_json::from_str(&out).map_err(|e| format!("osascript answered {out:?}: {e}"))
+        // Not the output itself: it can hold the title (PRIVACY.md).
+        serde_json::from_str(&out).map_err(|e| {
+            format!(
+                "osascript answered {} bytes that are not JSON: {e}",
+                out.len()
+            )
+        })
     }
 }
 
@@ -309,7 +331,7 @@ impl MediaSession for NowPlayingSession {
         if !a.ok {
             return Err(a.why.unwrap_or_else(|| "MediaRemote is unavailable".into()));
         }
-        if a.sent {
+        if a.sent || a.took(&self.want, false) {
             return Ok(());
         }
         if a.tried {
@@ -333,7 +355,7 @@ impl MediaSession for NowPlayingSession {
         if !a.ok {
             return Err(a.why.unwrap_or_else(|| "MediaRemote is unavailable".into()));
         }
-        if a.tried && !a.sent {
+        if a.tried && !a.sent && !a.took(&self.want, true) {
             return Err(a
                 .why
                 .unwrap_or_else(|| "MediaRemote did not take the play".into()));
@@ -443,6 +465,36 @@ mod tests {
         assert!(chrome(run).pause().unwrap_err().contains("no longer"));
         let (run, _) = canned(vec![Ok(r#"{"ok":true,"tried":true,"sent":false}"#)]);
         assert!(chrome(run).pause().is_err());
+    }
+
+    #[test]
+    fn a_pause_mediaremote_refused_but_that_took_effect_is_resumed_later() {
+        let (run, _) = canned(vec![Ok(
+            r#"{"ok":true,"tried":true,"sent":false,"after":{"app":"com.google.Chrome","title":"A video","state":2}}"#,
+        )]);
+        assert_eq!(chrome(run).pause(), Ok(()));
+        // Still playing afterwards: it did not pause.
+        let (run, _) = canned(vec![Ok(
+            r#"{"ok":true,"tried":true,"sent":false,"after":{"app":"com.google.Chrome","title":"A video","state":1}}"#,
+        )]);
+        assert!(chrome(run).pause().is_err());
+        let (run, _) = canned(vec![Ok(
+            r#"{"ok":true,"tried":true,"sent":false,"after":{"app":"com.google.Chrome","title":"A video","state":1}}"#,
+        )]);
+        assert_eq!(
+            chrome(run).play(),
+            Ok(()),
+            "a play that took effect is not retried"
+        );
+    }
+
+    #[test]
+    fn an_answer_that_is_not_json_does_not_leak_the_title() {
+        let (run, _) = canned(vec![Ok(
+            r#"{"ok":true,"now":{"app":"x","title":"A secret title""#,
+        )]);
+        let e = chrome(run).pause().unwrap_err();
+        assert!(!e.contains("secret"), "{e}");
     }
 
     #[test]
