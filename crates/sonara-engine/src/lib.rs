@@ -1,7 +1,7 @@
 //! Sonara L1 engines: the `Engine` trait every speech engine implements, the
 //! types it speaks in, a `Registry` that enforces the licence rule (R6), and
-//! the engines themselves (`onecore`; `kokoro` behind its feature; `fake`
-//! for tests).
+//! the engines themselves (`onecore` on Windows, `macos_say` on macOS;
+//! `kokoro` behind its feature; `fake` for tests).
 //!
 //! An engine turns one chunk of text into PCM. It knows nothing about items,
 //! queues or playback: the reader state machine (`sonara_core::reader`) asks
@@ -19,13 +19,23 @@ pub mod external;
 
 pub mod onecore;
 
+pub mod macos_say;
+
 #[cfg(feature = "kokoro")]
 pub mod kokoro;
 
 #[cfg(feature = "test-util")]
 pub mod fake;
 
-pub use error::{Error, Result, MISSING_VOICE_DATA_FIX};
+pub use error::{Error, Result, MACOS_VOICES_FIX, MISSING_VOICE_DATA_FIX};
+
+/// The engine of the operating system's own voices on this platform: the
+/// one that speaks while Kokoro is not ready, and the default without ONNX
+/// Runtime. `onecore` on Windows, `macos` on macOS.
+#[cfg(target_os = "macos")]
+pub const OS_ENGINE: EngineId = macos_say::ID;
+#[cfg(not(target_os = "macos"))]
+pub const OS_ENGINE: EngineId = onecore::ID;
 pub use registry::Registry;
 pub use types::{
     EngineId, EngineStatus, InputLimit, LicenseClass, PcmChunk, Readiness, Reason, SendMode, Voice,

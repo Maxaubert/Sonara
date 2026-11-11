@@ -2,15 +2,16 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake|ID] \
+pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|macos|fake|ID] \
 [--output device|null|wav:DIR] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
        [--keys windows|fake] [--no-external-engines] [--migrate-from DIR] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
   --engine ID         engine to start with (default: the saved one, else kokoro
                       when onnxruntime.dll is next to sonarad.exe, else
-                      onecore). Kokoro downloads its model on first use and
-                      speaks with onecore until it is ready. 'fake' is a
+                      onecore; on macOS libonnxruntime.dylib and macos).
+                      Kokoro downloads its model on first use and speaks
+                      with onecore (macos) until it is ready. 'fake' is a
                       deterministic tone engine for tests and conformance runs
                       (no Kokoro, no download); a saved external engine still
                       applies, with the fake engine as its fallback

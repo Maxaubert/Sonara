@@ -117,7 +117,12 @@ pub const SCHEMA: &[Setting] = &[
         key: "engine",
         layer: Layer::Reader,
         kind: Kind::Text,
-        default: "\"onecore\"",
+        // The OS engine (`sonara_engine::OS_ENGINE`).
+        default: if cfg!(target_os = "macos") {
+            "\"macos\""
+        } else {
+            "\"onecore\""
+        },
     },
     Setting {
         key: "voice",

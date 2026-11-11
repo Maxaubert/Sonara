@@ -108,7 +108,7 @@ impl Engines {
             .collect();
         let mut f = Map::new();
         f.insert("engines".into(), Value::Array(views));
-        let builtin: Vec<&str> = ["kokoro", "onecore", "fake"]
+        let builtin: Vec<&str> = ["kokoro", "onecore", "macos", "fake"]
             .into_iter()
             .filter(|b| self.registries().first().is_some_and(|r| r.get(b).is_ok()))
             .collect();

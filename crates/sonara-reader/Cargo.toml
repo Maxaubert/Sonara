@@ -5,9 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["onecore"]
+# Each OS engine is registered only on its own platform.
+default = ["onecore", "macos-say"]
 # Register the Windows OneCore engine in `default_registry`.
 onecore = ["sonara-engine/onecore"]
+# Register the macOS system voice engine (`say`) in `default_registry`.
+macos-say = ["sonara-engine/macos-say"]
 # The fake engine and `TestOutput`, for tests of this crate and of hosts.
 test-util = ["sonara-engine/test-util", "sonara-audio/test-util"]
 

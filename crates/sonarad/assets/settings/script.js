@@ -404,7 +404,7 @@ function renderNow(st) {
   if (dot.className !== want) dot.className = want;
 }
 
-const ENGINE_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows"};
+const ENGINE_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows", macos: "macOS"};
 const ENGINE_STATES = {loading: "loading", downloading: "downloading voices",
                        waiting: "download failed, retrying soon", unavailable: "cannot run on this PC"};
 function engineText(st) {
@@ -1792,7 +1792,7 @@ addEventListener("beforeunload", e => {
 
 // ---- the engine picker on the Speech page ---------------------------------
 // One plain list: the built-in engines first, then the user's own, then "Add new engine...".
-const PICKER_NAMES = {kokoro: "Kokoro", onecore: "Windows voices"};
+const PICKER_NAMES = {kokoro: "Kokoro", onecore: "Windows voices", macos: "macOS voices"};
 const ADD_ENGINE = "__add";
 function pickerName(id) { return PICKER_NAMES[id] || engineName(id); }
 function isProfile(id) { return !!(engineData && engineData.engines.some(e => e.id === id)); }

@@ -42,6 +42,16 @@ fn ids_follow_the_rule() {
 }
 
 #[test]
+fn the_macos_system_engine_id_is_reserved_only_on_macos() {
+    let r = validate_id("macos");
+    if cfg!(target_os = "macos") {
+        assert!(r.unwrap_err().contains("built-in"));
+    } else {
+        assert!(r.is_ok());
+    }
+}
+
+#[test]
 fn labels_models_and_voices_are_bounded_plain_text() {
     assert!(err(local(json!({"label": "x".repeat(41)}))).contains("label"));
     assert!(err(local(json!({"label": "a\nb"}))).contains("control"));
