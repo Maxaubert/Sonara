@@ -22,7 +22,9 @@ gate runs when a changed path starts with one of its triggers (GATES):
 limits clippy and the tests to the changed crates and every crate that
 depends on them. Conformance and e2e use target/debug (SONARAD and
 SONARA_HOOK point there), so a release build of the SDK gate never shadows
-them. Works from PowerShell or Git Bash; needs ~/.cargo/bin on PATH.
+them. Works from PowerShell or Git Bash on Windows and from a macOS shell
+(executables without .exe); needs cargo on PATH (~/.cargo/bin, or
+/opt/homebrew/opt/rustup/bin with Homebrew's rustup).
 
 REQUIRED_CHECKS are the ci.yml job names that branch protection requires;
 tests/repo/test_gate.py keeps the two in step.
@@ -55,6 +57,11 @@ bump_version = _load_bump_version()
 
 # The ci.yml jobs every PR must pass (branch protection, #250).
 REQUIRED_CHECKS = ("check", "rust", "conformance", "clients", "deny")
+# The other ci.yml jobs: advisory until branch protection requires them
+# (moving one to REQUIRED_CHECKS goes with that settings change).
+ADVISORY_CHECKS = ("macos",)
+# The executables' suffix on this platform.
+EXE = ".exe" if sys.platform == "win32" else ""
 
 # Files every crate builds with: a change here tests the whole workspace.
 WORKSPACE_FILES = ("Cargo.toml", "Cargo.lock", ".cargo/", "rust-toolchain.toml", "rustfmt.toml",
@@ -170,7 +177,7 @@ def _step(label: str, argv: Sequence[str], cwd: Optional[str] = None,
 
 def _debug_env() -> Dict[str, str]:
     debug = REPO_ROOT / "target" / "debug"
-    return {"SONARAD": str(debug / "sonarad.exe"), "SONARA_HOOK": str(debug / "sonara-hook.exe")}
+    return {"SONARAD": str(debug / f"sonarad{EXE}"), "SONARA_HOOK": str(debug / f"sonara-hook{EXE}")}
 
 
 def steps_for(gate: str, crates: Optional[List[str]], nextest: bool) -> List[Step]:
@@ -203,7 +210,7 @@ def steps_for(gate: str, crates: Optional[List[str]], nextest: bool) -> List[Ste
     if gate == "sdk":
         npm = shutil.which("npm") or "npm"
         node = shutil.which("node") or "node"
-        exe = str(REPO_ROOT / "target" / "release" / "sonarad.exe")
+        exe = str(REPO_ROOT / "target" / "release" / f"sonarad{EXE}")
         release = {"SONARAD": exe}
         # The Python host imports sonara_client the way an app does; CI pip-installs it.
         host = {"SONARA_RUNTIME": exe, "PYTHONPATH": str(REPO_ROOT / "clients" / "python" / "src")}
@@ -228,7 +235,7 @@ def steps_for(gate: str, crates: Optional[List[str]], nextest: bool) -> List[Ste
         return out
     if gate == "embed":
         npm = shutil.which("npm") or "npm"
-        exe = str(REPO_ROOT / "target" / "release" / "sonarad.exe")
+        exe = str(REPO_ROOT / "target" / "release" / f"sonarad{EXE}")
         return [_step("cargo build runtime (release)", ["cargo", "build", "-p", "sonarad", "-p", "sonara-hook",
                                                         "-p", "sonara-cli", "--release"]),
                 _step("stage runtime DLLs", [py, "packaging/runtime_dlls.py", "stage", "target/release"]),

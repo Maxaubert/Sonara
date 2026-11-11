@@ -4,6 +4,7 @@ job names the branch protection requires."""
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,7 +57,7 @@ def test_client_and_packaging_changes_run_the_sdk_gates():
 
 
 def test_the_plugin_scripts_run_conformance():
-    for path in ("bin/sonara-hook-launch", "bin/sonara-bootstrap.ps1", "hooks/hooks.json",
+    for path in ("bin/sonara-hook-launch", "bin/sonara-bootstrap.ps1", "bin/sonara-bootstrap.sh", "hooks/hooks.json",
                  "conformance/core/test_instance.py", "packaging/release_zip.py"):
         assert "conformance" in gate.select([path]), path
 
@@ -70,25 +71,25 @@ def test_golden_fixtures_run_the_rust_tests():
     assert "rust" in gate.select(["tests/fixtures/text_rules/cases.json"])
 
 
-# A small workspace: core <- reader <- sonarad, and log on its own.
+# A small workspace: core <- reader <- sonarad, and log on its own, at a
+# root in this platform's path form (C:\\repo on Windows, /repo elsewhere).
+ROOT = Path(Path.cwd().anchor) / "repo"
+
+
+def _pkg(short, name, deps):
+    return {"id": f"{short} 0.1.0 (path+{(ROOT / 'crates' / name).as_uri()})", "name": name,
+            "manifest_path": str(ROOT / "crates" / name / "Cargo.toml"),
+            "dependencies": [{"name": d} for d in deps]}
+
+
+_PACKAGES = [_pkg("core", "sonara-core", []),
+             _pkg("reader", "sonara-reader", ["sonara-core", "serde"]),
+             _pkg("d", "sonarad", ["sonara-reader"]),
+             _pkg("log", "sonara-log", [])]
 META = {
-    "workspace_root": "C:\\repo",
-    "workspace_members": ["core 0.1.0 (path+file:///C:/repo/crates/sonara-core)",
-                          "reader 0.1.0 (path+file:///C:/repo/crates/sonara-reader)",
-                          "d 0.1.0 (path+file:///C:/repo/crates/sonarad)",
-                          "log 0.1.0 (path+file:///C:/repo/crates/sonara-log)"],
-    "packages": [
-        {"id": "core 0.1.0 (path+file:///C:/repo/crates/sonara-core)", "name": "sonara-core",
-         "manifest_path": "C:\\repo\\crates\\sonara-core\\Cargo.toml", "dependencies": []},
-        {"id": "reader 0.1.0 (path+file:///C:/repo/crates/sonara-reader)", "name": "sonara-reader",
-         "manifest_path": "C:\\repo\\crates\\sonara-reader\\Cargo.toml",
-         "dependencies": [{"name": "sonara-core"}, {"name": "serde"}]},
-        {"id": "d 0.1.0 (path+file:///C:/repo/crates/sonarad)", "name": "sonarad",
-         "manifest_path": "C:\\repo\\crates\\sonarad\\Cargo.toml",
-         "dependencies": [{"name": "sonara-reader"}]},
-        {"id": "log 0.1.0 (path+file:///C:/repo/crates/sonara-log)", "name": "sonara-log",
-         "manifest_path": "C:\\repo\\crates\\sonara-log\\Cargo.toml", "dependencies": []},
-    ],
+    "workspace_root": str(ROOT),
+    "workspace_members": [p["id"] for p in _PACKAGES],
+    "packages": _PACKAGES,
 }
 
 
@@ -110,7 +111,16 @@ def test_quick_tests_the_whole_workspace_when_a_shared_file_changed(path):
 def test_ci_keeps_the_required_check_names():
     yaml = pytest.importorskip("yaml")
     ci = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
-    assert sorted(ci["jobs"]) == sorted(gate.REQUIRED_CHECKS)
+    assert sorted(ci["jobs"]) == sorted(gate.REQUIRED_CHECKS + gate.ADVISORY_CHECKS)
+    assert not set(gate.REQUIRED_CHECKS) & set(gate.ADVISORY_CHECKS)
+
+
+def test_the_executables_carry_this_platforms_suffix():
+    want = ".exe" if sys.platform == "win32" else ""
+    assert gate.EXE == want
+    env = gate._debug_env()
+    assert Path(env["SONARAD"]).name == "sonarad" + want
+    assert Path(env["SONARA_HOOK"]).name == "sonara-hook" + want
 
 
 def _labels(gate_name):
@@ -124,7 +134,7 @@ def test_the_sdk_gate_runs_every_step_of_the_ci_clients_job():
         assert want in labels, want
     assert labels.index("stage runtime DLLs") < labels.index("npm-runtime: build")
     host = next(s for s in gate.steps_for("sdk", None, False) if s[0] == "Python smoke host")
-    assert host[3]["SONARA_RUNTIME"].endswith("sonarad.exe")
+    assert Path(host[3]["SONARA_RUNTIME"]).name == "sonarad" + gate.EXE
 
 
 def test_the_sdk_triggers_cover_the_player_demo_and_the_python_host():
@@ -155,4 +165,4 @@ def test_the_embed_gate_builds_the_release_zip_inputs_and_points_at_the_release_
         assert exe in build, exe
     assert "--release" in build
     suite = next(s for s in steps if s[0] == "tests/embed")
-    assert Path(suite[3]["SONARAD"]).parts[-2:] == ("release", "sonarad.exe")
+    assert Path(suite[3]["SONARAD"]).parts[-2:] == ("release", "sonarad" + gate.EXE)
