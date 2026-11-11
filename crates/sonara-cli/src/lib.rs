@@ -18,7 +18,7 @@
 //! - `doctor`: one row per check; informational rows never fail.
 //! - `uninstall [--keep LIST]`: stop, remove the runtime folder and the
 //!   home except what the user keeps (and, unless settings are kept, the
-//!   external engine keys in Credential Manager), and leave the stop
+//!   external engine keys in Credential Manager or the Keychain), and leave the stop
 //!   sentinel so the plugin's hooks stay quiet until `/sonara:start`.
 //! - `engines ...`: the external engine profiles (`engines`); a `command`
 //!   engine (a program on this PC) is written into `engines.json` here,

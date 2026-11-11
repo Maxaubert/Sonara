@@ -6,6 +6,7 @@ read with its built-in engine and report ``auth``."""
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 from fakes import FakeCloud
@@ -33,7 +34,8 @@ def test_cloud_kinds_are_listed(client):
 
 def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
     view = ok(client, {"type": "engine_add", "engine": cloud.profile(), "secret": SECRET})["engine"]
-    assert view["key_ref"] == "credman" and view["key_present"] is True
+    os_key_ref = "keychain" if sys.platform == "darwin" else "credman"
+    assert view["key_ref"] == os_key_ref and view["key_present"] is True
     assert view["sends_text_to"] == "127.0.0.1"
     assert view["license_class"] == "external"
     eid = view["id"]

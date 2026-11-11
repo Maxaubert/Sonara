@@ -7,7 +7,10 @@ Each method sends one core message as is. The profile is named by the
 refuses external engines (``sonarad --no-external-engines``) answers
 ``E_UNSUPPORTED``. A key is sent only in ``add`` (``secret``) or
 ``set_key`` (or with a draft profile in ``models``, for that request only);
-the runtime stores it in Windows Credential Manager and never returns it.
+the runtime stores it in the OS key store, Windows Credential Manager or the
+macOS Keychain, and never returns it. A profile's ``key_ref`` names that
+store ``"credman"`` (Windows) or ``"keychain"`` (macOS); a runtime takes
+either on every platform (``KEY_STORES``, ``is_stored_key``).
 
 Sonara names no model or voice of its own (protocol 1.5, runtime 0.19.0):
 ``models`` and ``voices`` list the provider's live, and a profile without
@@ -33,6 +36,17 @@ Send = Callable[[str, dict], dict]
 
 #: The values of a profile's ``send_mode`` (#235).
 SEND_MODES = ("message", "sentence")
+
+#: The ``key_ref`` values that name the OS key store: ``"credman"`` (Windows
+#: Credential Manager) and ``"keychain"`` (the macOS Keychain). A view says
+#: the runtime platform's name; a profile may send either.
+KEY_STORES = ("credman", "keychain")
+
+
+def is_stored_key(key_ref: Optional[str]) -> bool:
+    """Whether ``key_ref`` is a key kept in the OS key store (not ``none``,
+    not ``env:``)."""
+    return key_ref in KEY_STORES
 
 
 class Engines:

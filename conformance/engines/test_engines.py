@@ -7,10 +7,14 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 
 from harness import wait_until
 
 SECRET = "sk-conformance-secret-0123456789"
+# The name of the OS key store a view and engines.json use: "keychain" on
+# macOS, "credman" elsewhere; a profile may send either.
+OS_KEY_REF = "keychain" if sys.platform == "darwin" else "credman"
 
 
 def ok(c, msg):
@@ -128,8 +132,24 @@ def test_secret_not_in_any_home_file(rt, client, profile, provider):
         if p.is_file() and p.name != "fake-keys.json":
             assert SECRET not in p.read_text(encoding="utf-8", errors="replace"), p
     stored = json.loads((rt.home / "engines.json").read_text(encoding="utf-8"))
-    assert stored["engines"][0]["key_ref"] == "credman"
+    assert stored["engines"][0]["key_ref"] == OS_KEY_REF
     assert SECRET not in rt.stderr()
+
+
+def test_key_ref_credman_and_keychain_both_name_the_os_store(client, profile, provider):
+    # Protocol 1.x, additive: "keychain" (macOS) and "credman" (Windows) are
+    # the same OS key store on every platform; the view says this one's.
+    for ref in ("keychain", "credman"):
+        view = ok(client, {"type": "engine_add", "engine": dict(profile, key_ref=ref),
+                           "secret": SECRET, "replace": True})["engine"]
+        assert view["key_ref"] == OS_KEY_REF and view["key_present"] is True, ref
+    p = dict(profile)
+    del p["key_ref"]
+    view = ok(client, {"type": "engine_add", "engine": dict(p, id="nokeyref"),
+                       "secret": SECRET})["engine"]
+    assert view["key_ref"] == OS_KEY_REF, "a secret without key_ref stores it there"
+    r = client.request({"type": "engine_add", "engine": dict(profile, id="vault", key_ref="vault")})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
 
 
 def test_no_external_engines_flag_refuses(start):

@@ -479,12 +479,25 @@ fn deepgram_profiles() {
     assert!(err(dg(json!({"options": {"sample_rate": 22050}}))).contains("sample_rate"));
 }
 
+#[cfg(windows)]
 fn exe() -> String {
     // A real .exe that exists on every Windows (check_new).
     std::env::var("SystemRoot")
         .map(|r| format!("{r}\\System32\\whoami.exe"))
         .unwrap_or_else(|_| "C:\\Windows\\System32\\whoami.exe".into())
 }
+
+/// A real executable that exists on every unix (check_new).
+#[cfg(not(windows))]
+fn exe() -> String {
+    "/usr/bin/whoami".into()
+}
+
+/// A program path that does not exist.
+#[cfg(windows)]
+const MISSING: &str = "C:\\Nope\\missing-tts.exe";
+#[cfg(not(windows))]
+const MISSING: &str = "/nonexistent-sonara/missing-tts";
 
 #[test]
 fn command_profiles() {
@@ -493,7 +506,10 @@ fn command_profiles() {
         "voices": ["amy", "joe"]})))
     .unwrap();
     assert_eq!(p.key_ref, KeyRef::None, "a program needs no key by default");
-    assert_eq!(p.sends_text_to(), "program whoami.exe");
+    assert_eq!(
+        p.sends_text_to(),
+        format!("program {}", program_name(&exe()))
+    );
     assert_eq!(p.host(), "");
     assert!(p.is_local());
     assert_eq!((p.timeout_ms(), p.prefetch()), (30_000, 1));
@@ -503,22 +519,53 @@ fn command_profiles() {
         vec![exe(), "--voice".into(), "{voice}".into()]
     );
     assert!(p.check_new().is_ok());
-    let gone = parse(cmd(json!({"argv": ["C:\\Nope\\missing-tts.exe"]}))).unwrap();
+    let gone = parse(cmd(json!({"argv": [MISSING]}))).unwrap();
     assert_eq!(
         gone.check_new(),
-        Err(ProfileError::Invalid(
-            "the program 'C:\\Nope\\missing-tts.exe' does not exist".into()
-        ))
+        Err(ProfileError::Invalid(format!(
+            "the program '{MISSING}' does not exist"
+        )))
     );
+    // Windows: only an .exe (a .bat or .cmd runs through cmd.exe).
+    #[cfg(windows)]
+    for (opts, msg) in [
+        (json!({"argv": ["C:\\Tools\\say.bat"]}), "must be an .exe"),
+        (json!({"argv": ["C:\\Tools\\say.cmd"]}), "must be an .exe"),
+    ] {
+        assert!(err(cmd(opts.clone())).contains(msg), "{opts}");
+    }
+    // Unix: any absolute path (a `#!` script too); the execute bit is
+    // checked when it is added and before each start.
+    #[cfg(not(windows))]
+    {
+        assert!(parse(cmd(json!({"argv": ["/opt/tools/say.sh"]}))).is_ok());
+        assert!(err(cmd(json!({"argv": ["/{text}/tts"]}))).contains("full path"));
+        assert!(err(cmd(json!({"argv": ["tts"]}))).contains("/usr/local/bin/piper"));
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sonara-profile-x-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("say.sh");
+        std::fs::write(&script, "#!/bin/sh\n").unwrap();
+        let path = script.display().to_string();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let p = parse(cmd(json!({"argv": [path]}))).unwrap();
+        assert_eq!(
+            p.check_new(),
+            Err(ProfileError::Invalid(format!(
+                "the program '{path}' is not executable (chmod +x it)"
+            )))
+        );
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(p.check_new().is_ok(), "a #! script with the execute bit");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     for (opts, msg) in [
         (json!({}), "needs options.argv"),
         (json!({"argv": []}), "needs options.argv"),
         (json!({"argv": "tts.exe"}), "needs options.argv"),
         (json!({"argv": ["tts.exe"]}), "full path"),
         (json!({"argv": ["{text}.exe"]}), "full path"),
-        (json!({"argv": ["C:\\Tools\\say.bat"]}), "must be an .exe"),
-        (json!({"argv": ["C:\\Tools\\say.cmd"]}), "must be an .exe"),
-        (json!({"argv": ["C:\\Tools\\tts.exe", 3]}), "list of texts"),
+        (json!({"argv": [exe(), 3]}), "list of texts"),
         // The text never goes on the command line (security review of
         // PR3): stdin, or a temporary file at {in}.
         (
@@ -668,7 +715,8 @@ fn json_round_trip_drops_secret_fields() {
         out,
         json!({"id": "openai", "kind": "openai-compatible", "label": "OpenAI",
             "url": "https://api.openai.com/v1", "model": "m1", "voice": "v1",
-            "key_ref": "credman", "options": {"preset": "openai"}})
+            "key_ref": OS_KEY_REF, "options": {"preset": "openai"}}),
+        "a saved profile names this platform's store"
     );
 }
 

@@ -136,6 +136,7 @@ $S engines add piper --kind command --option output=file --option 'argv=["C:/pip
 ```
 
 - The program must be an `.exe` that exists. `.bat` and `.cmd` are refused.
+- On macOS, the program is any file with its execute bit set (`chmod +x`), a `#!` script too, given by its full path, such as `/usr/local/bin/piper`.
 - The text read is never an argument. It goes on stdin, or in a file at `{in}` with `--option input=file`.
 - Placeholders in arguments: `{voice}`, `{rate}`, `{speed}`, `{out}`, `{in}`.
 
@@ -180,7 +181,8 @@ Gemini's free tier limits requests per minute and per day, so Sonara sends a who
 
 | Where | How |
 |---|---|
-| Windows Credential Manager | The default. Stored as `sonara:<name>` |
+| Windows Credential Manager | The default on Windows. Stored as `sonara:<name>` |
+| macOS Keychain | The default on macOS. Stored in your login Keychain as a password with service `sonara`, account `<name>` |
 | An environment variable you name | The name must end in `_API_KEY` or `_SPEECH_KEY`, or be `SPEECH_KEY`, or start with `SONARA_` |
 
 - A key is never written to a file, shown again, or logged.

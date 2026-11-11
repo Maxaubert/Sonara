@@ -19,7 +19,7 @@ pub use super::deepgram::DEEPGRAM_RATES;
 pub use super::elevenlabs::ELEVENLABS_FORMATS;
 pub use super::gemini::GEMINI_CHUNK_CHARS;
 use crate::SendMode;
-pub use kind::{implemented_kinds, KeyRef, Kind, Preset};
+pub use kind::{implemented_kinds, KeyRef, Kind, Preset, OS_KEY_REF};
 use serde_json::{json, Map, Value};
 pub use url::{command_origin, default_base, is_loopback_host, origin_of, Url};
 use validate::opt_text;
@@ -68,6 +68,35 @@ pub fn voice_locale(voice: &str) -> Option<String> {
         && region.chars().all(|c| c.is_ascii_alphanumeric())
         && !rest.is_empty();
     ok.then(|| format!("{lang}-{region}"))
+}
+
+/// A `command` program as messages name it, and an example path.
+#[cfg(windows)]
+pub const PROGRAM_KIND: &str = "an .exe";
+#[cfg(windows)]
+pub const EXAMPLE_PROGRAM: &str = "C:\\Tools\\tts.exe";
+#[cfg(not(windows))]
+pub const PROGRAM_KIND: &str = "an executable file";
+#[cfg(not(windows))]
+pub const EXAMPLE_PROGRAM: &str = "/usr/local/bin/piper";
+
+/// Why `path` cannot be started as a `command` program now, or `None`:
+/// it must be a file, and on unix one with an execute bit (a `#!` script
+/// is fine). Never a search of PATH: the caller passes an absolute path.
+pub fn program_problem(path: &std::path::Path) -> Option<&'static str> {
+    let meta = match std::fs::metadata(path) {
+        Ok(m) if m.is_file() => m,
+        _ => return Some("does not exist"),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o111 == 0 {
+            return Some("is not executable (chmod +x it)");
+        }
+    }
+    let _ = meta;
+    None
 }
 
 /// Why a profile cannot be used.

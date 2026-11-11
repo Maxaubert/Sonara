@@ -8,7 +8,7 @@ use common::{Route, ScriptServer, TempDir};
 use serde_json::{json, Value};
 use sonara_engine::external::error::cue_text;
 use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret};
-use sonara_engine::external::profile::Profile;
+use sonara_engine::external::profile::{program_name, Profile};
 use sonara_engine::external::{External, ExternalConfig};
 use sonara_engine::fake::FakeEngine;
 use sonara_engine::{Engine, Error, PcmChunk, Readiness, Reason};
@@ -19,6 +19,11 @@ use std::time::{Duration, Instant};
 const KEY: &str = "more-test-key-0123456789";
 const VOICE: &str = "a0e99841-438c-4a64-b679-ae501e7d6091";
 const FAKE_TTS: &str = env!("CARGO_BIN_EXE_sonara-fake-tts");
+/// A program path that does not exist.
+#[cfg(windows)]
+const MISSING_TTS: &str = "C:\\Nope\\sonara-missing-tts.exe";
+#[cfg(not(windows))]
+const MISSING_TTS: &str = "/nonexistent-sonara/sonara-missing-tts";
 
 fn build(v: Value, key: Option<&str>, fallback: bool) -> External {
     let id = v["id"].as_str().unwrap().to_string();
@@ -550,8 +555,11 @@ fn command_failures_map_to_reasons() {
     assert_eq!(reason, Reason::Server);
     assert_eq!(
         message,
-        "The speech program (sonara-fake-tts.exe) failed (exit code 3): \
-         fake-tts: the model broke, key [redacted]"
+        format!(
+            "The speech program ({}) failed (exit code 3): \
+             fake-tts: the model broke, key [redacted]",
+            program_name(FAKE_TTS)
+        )
     );
     let (reason, message) = run(json!(["--mode", "garbage"]), json!({}));
     assert_eq!(reason, Reason::Format);
@@ -565,12 +573,46 @@ fn command_failures_map_to_reasons() {
     );
     assert_eq!(reason, Reason::Format);
     assert!(message.ends_with("wrote no audio file"), "{message}");
-    let gone = build(
-        command(json!(["C:\\Nope\\sonara-missing-tts.exe"]), json!({})),
-        None,
-        false,
-    );
+    let gone = build(command(json!([MISSING_TTS]), json!({})), None, false);
     assert_eq!(failure(gone.test("x", "", 200)).0, Reason::BadConfig);
+}
+
+/// Unix: a `#!` script is a program (execve runs its interpreter, no shell
+/// reads the arguments); without its execute bit it is never started.
+#[cfg(unix)]
+#[test]
+fn a_shebang_script_is_a_command_program_on_unix() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("cmd-shebang");
+    let rec = dir.path().join("rec.json");
+    let script = dir.path().join("say.sh");
+    std::fs::write(&script, format!("#!/bin/sh\nexec '{FAKE_TTS}' \"$@\"\n")).unwrap();
+    let run = |mode: u32| {
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(mode)).unwrap();
+        build(
+            command(
+                json!([
+                    script.display().to_string(),
+                    "a; b | c $(x)",
+                    "--record",
+                    rec.display().to_string()
+                ]),
+                json!({}),
+            ),
+            None,
+            false,
+        )
+        .test("Hello.", "", 200)
+    };
+    let (reason, message) = failure(run(0o644));
+    assert_eq!(reason, Reason::BadConfig);
+    assert!(
+        message.ends_with("is not executable (chmod +x it)"),
+        "{message}"
+    );
+    assert!(!rec.exists(), "never started");
+    assert!(run(0o755).is_ok());
+    assert_eq!(record(&rec)["args"][0], "a; b | c $(x)", "verbatim");
 }
 
 #[test]

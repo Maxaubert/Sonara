@@ -19,6 +19,10 @@ sonara-core.workspace = true
 sonara-engine.workspace = true
 thiserror.workspace = true
 
+# `killpg` of the summarizer's process group at its timeout.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 sonara-reader = { workspace = true, features = ["test-util"] }
 sonara-engine = { workspace = true, features = ["test-util"] }

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 pub enum Keep {
     /// `config.json`, `keymap.json`, `session_prefs.json`, `engines.json`,
     /// the custom earcons (`earcons\`) and the external engine keys in
-    /// Credential Manager.
+    /// Credential Manager (on macOS the Keychain).
     Settings,
     /// `models\` (the Kokoro voice model, about 350 MB).
     Models,
@@ -193,9 +193,14 @@ pub fn remove_all(home: &Path, runtime_root: Option<&Path>, exe: &Path, keep: &[
 /// The target prefix of Sonara's credentials. The CLI links no engine
 /// crate, so a test pins it to `sonara_engine::external::keys::TARGET_PREFIX`.
 pub const CREDENTIAL_PREFIX: &str = "sonara:";
+/// The Keychain service of Sonara's keys (macOS), pinned by a test to
+/// `sonara_engine::external::keys::KEYCHAIN_SERVICE`.
+pub const KEYCHAIN_SERVICE: &str = "sonara";
 
 /// Where external engine keys are kept: Windows Credential Manager,
-/// generic credentials `sonara:<profile id>` (spec 6.2).
+/// generic credentials `sonara:<profile id>` (spec 6.2), or the macOS
+/// Keychain, generic passwords of the service `sonara`, account
+/// `<profile id>`.
 pub trait Credentials {
     /// Profile ids that have a key.
     fn list(&self) -> Result<Vec<String>, String>;
@@ -292,6 +297,65 @@ impl Credentials for WindowsCredentials {
     }
 }
 
+/// The macOS Keychain (the user's default keychain).
+pub struct KeychainCredentials;
+
+#[cfg(target_os = "macos")]
+impl Credentials for KeychainCredentials {
+    fn list(&self) -> Result<Vec<String>, String> {
+        use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+        let found = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(KEYCHAIN_SERVICE)
+            .load_attributes(true)
+            .limit(Limit::All)
+            .search();
+        let items = match found {
+            Ok(items) => items,
+            // errSecItemNotFound: none.
+            Err(e) if e.code() == -25300 => return Ok(Vec::new()),
+            Err(e) => return Err(e.to_string()),
+        };
+        let mut out: Vec<String> = items
+            .iter()
+            .filter_map(|i| i.simplify_dict())
+            .filter(|d| d.get("svce").map(String::as_str) == Some(KEYCHAIN_SERVICE))
+            .filter_map(|mut d| d.remove("acct"))
+            .collect();
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+
+    fn delete(&self, id: &str) -> Result<(), String> {
+        match security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, id) {
+            Ok(()) => Ok(()),
+            Err(e) if e.code() == -25300 => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl Credentials for KeychainCredentials {
+    fn list(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+    fn delete(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// This platform's key store and its name in messages: Credential Manager
+/// on Windows, the Keychain on macOS.
+pub fn os_credentials() -> (&'static dyn Credentials, &'static str) {
+    if cfg!(target_os = "macos") {
+        (&KeychainCredentials, "the Keychain")
+    } else {
+        (&WindowsCredentials, "Credential Manager")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +380,15 @@ mod tests {
         let at = keys.find(decl).expect("keys.rs declares TARGET_PREFIX") + decl.len();
         let engine = &keys[at..at + keys[at..].find('"').unwrap()];
         assert_eq!(CREDENTIAL_PREFIX, engine);
+    }
+
+    #[test]
+    fn the_keychain_service_is_the_engines_keychain_service() {
+        let keys = include_str!("../../sonara-engine/src/external/keys.rs");
+        let decl = "pub const KEYCHAIN_SERVICE: &str = \"";
+        let at = keys.find(decl).expect("keys.rs declares KEYCHAIN_SERVICE") + decl.len();
+        let engine = &keys[at..at + keys[at..].find('"').unwrap()];
+        assert_eq!(KEYCHAIN_SERVICE, engine);
     }
 
     #[test]

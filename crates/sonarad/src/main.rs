@@ -4,7 +4,7 @@
 //! 2 bad command line, 3 another instance already runs for this user and
 //! home.
 use sonara_audio::RodioOutput;
-use sonara_engine::external::keys::{CredentialStore, FileStore, KeyStore};
+use sonara_engine::external::keys::{os_store, FileStore, KeyStore};
 use sonara_engine::kokoro::{self, Kokoro};
 use sonara_engine::{Engine, LicenseClass};
 use sonara_reader::{Config, ReaderHandle, Registry};
@@ -217,7 +217,7 @@ fn build_reader(
 /// Where profile keys are kept.
 fn key_store(kind: KeysKind, home: &Home) -> Arc<dyn KeyStore> {
     match kind {
-        KeysKind::Windows => Arc::new(CredentialStore),
+        KeysKind::Os => os_store(),
         KeysKind::Fake => Arc::new(FileStore::new(home.dir.join("fake-keys.json"))),
     }
 }

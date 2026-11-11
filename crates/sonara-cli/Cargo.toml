@@ -18,3 +18,11 @@ serde_json.workspace = true
 # console (a key prompt without echo).
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_System_Console"] }
+
+# The key prompt without echo (termios).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The Keychain (uninstall removes the external engine keys on macOS).
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"

@@ -479,9 +479,10 @@ fn uninstall(paths: &Paths, exe: &Path, keep: &[Keep]) -> Result<(), String> {
         Err(e) => return Err(format!("Sonara did not stop ({e}); nothing was removed")),
     }
     let r = uninstall::remove_all(&paths.home, paths.runtime_root.as_deref(), exe, keep);
-    let (keys, key_failures) = uninstall::remove_credentials(&uninstall::WindowsCredentials, keep);
+    let (store, store_name) = uninstall::os_credentials();
+    let (keys, key_failures) = uninstall::remove_credentials(store, keep);
     for id in &keys {
-        println!("Removed the key of engine {id} from Credential Manager");
+        println!("Removed the key of engine {id} from {store_name}");
     }
     for (id, e) in &key_failures {
         println!("Could not remove the key of engine {id} ({e})");
