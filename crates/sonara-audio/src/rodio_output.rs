@@ -1,16 +1,27 @@
-//! The real output: rodio on cpal (WASAPI on Windows), on its own thread.
+//! The real output: rodio on cpal (WASAPI on Windows, Core Audio on macOS),
+//! on its own thread.
 //!
 //! One `Sink` per played chunk gives true pause and resume (M0 measured about
 //! 5 ms) and makes `stop` a plain drop. Callbacks queued before and after the
 //! chunk's audio report `ChunkStarted` and `ChunkFinished`. The device opens
 //! on the first play and reopens on a later one after it failed or was lost.
 //!
-//! It follows the Windows default output (#288): before each chunk (and
+//! It follows the system default output (#288): before each chunk (and
 //! before a clip while no speech is left to play) it compares the default
-//! render endpoint with the one its stream opened on, and reopens on the new
-//! default when they differ. The check runs at a chunk boundary only, so a
-//! change never cuts a chunk mid-word: the chunk playing ends on the old
-//! device.
+//! output's id (the render endpoint id on Windows, the device UID on macOS)
+//! with the one its stream opened on, and reopens on the new default when
+//! they differ. The check runs at a chunk boundary only, so a change never
+//! cuts a chunk mid-word: the chunk playing ends on the old device.
+//!
+//! A lost device: on Windows cpal reports it through the stream's error
+//! callback, which fails the chunk playing (`DeviceLost`). On macOS cpal
+//! 0.16 opens the default device as a Core Audio default output unit, which
+//! moves to the new default by itself and registers no disconnect listener
+//! for it, so unplugging the default device reports no error: the chunk
+//! playing carries on on the new default, and the id check above reopens
+//! the stream there at the next chunk boundary (so it runs at the new
+//! device's own format). The output never waits on an error that does not
+//! come.
 use crate::dump::Dump;
 use crate::{AudioEvent, ItemId, Output, PcmChunk};
 use rodio::buffer::SamplesBuffer;
@@ -98,9 +109,10 @@ trait Endpoint: Send {
     fn default_id(&mut self) -> Option<String>;
 }
 
-/// The real default device: rodio (cpal) opens it, and the id is the
-/// Windows endpoint of the role cpal opens, `eConsole` (the "default
-/// device" of the Sound settings, which sets `eMultimedia` with it).
+/// The real default device: rodio (cpal) opens it. On Windows the id is the
+/// endpoint of the role cpal opens, `eConsole` (the "default device" of the
+/// Sound settings, which sets `eMultimedia` with it); on macOS it is the UID
+/// of the default output device.
 struct DefaultDevice {
     /// COM is initialized on the output thread.
     #[cfg(windows)]
@@ -164,11 +176,78 @@ impl Endpoint for DefaultDevice {
         }
     }
 
-    #[cfg(not(windows))]
+    /// The UID of the system default output device (Sound settings >
+    /// Output), the device cpal's default output unit plays on.
+    #[cfg(target_os = "macos")]
+    fn default_id(&mut self) -> Option<String> {
+        use objc2_core_audio::{
+            kAudioDevicePropertyDeviceUID, kAudioHardwareNoError,
+            kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyElementMain,
+            kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject, kAudioObjectUnknown,
+            AudioObjectGetPropertyData, AudioObjectID, AudioObjectPropertyAddress,
+        };
+        use objc2_core_foundation::{CFRetained, CFString};
+        use std::ptr::{null, NonNull};
+
+        let mut address = AudioObjectPropertyAddress {
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain,
+        };
+        let mut device: AudioObjectID = kAudioObjectUnknown;
+        let mut size = std::mem::size_of::<AudioObjectID>() as u32;
+        // SAFETY: reads one AudioObjectID into `device`, whose size `size`
+        // gives; every pointer is valid for the call.
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                kAudioObjectSystemObject as AudioObjectID,
+                NonNull::from(&address),
+                0,
+                null(),
+                NonNull::from(&mut size),
+                NonNull::from(&mut device).cast(),
+            )
+        };
+        if status != kAudioHardwareNoError || device == kAudioObjectUnknown {
+            return None;
+        }
+        address.mSelector = kAudioDevicePropertyDeviceUID;
+        let mut uid: *const CFString = null();
+        let mut size = std::mem::size_of::<*const CFString>() as u32;
+        // SAFETY: reads one CFStringRef into `uid`, as above.
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                device,
+                NonNull::from(&address),
+                0,
+                null(),
+                NonNull::from(&mut size),
+                NonNull::from(&mut uid).cast(),
+            )
+        };
+        if status != kAudioHardwareNoError {
+            return None;
+        }
+        let uid = NonNull::new(uid.cast_mut())?;
+        // SAFETY: the UID comes back retained and the caller releases it
+        // (kAudioDevicePropertyDeviceUID); CFRetained releases it on drop.
+        let uid = unsafe { CFRetained::from_raw(uid) };
+        Some(uid.to_string())
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     fn default_id(&mut self) -> Option<String> {
         None
     }
 }
+
+/// Why the log names a reopen after the default output changed.
+#[cfg(windows)]
+const DEFAULT_CHANGED: &str = "the Windows default output changed";
+#[cfg(target_os = "macos")]
+const DEFAULT_CHANGED: &str = "the macOS default output changed";
+#[cfg(not(any(windows, target_os = "macos")))]
+const DEFAULT_CHANGED: &str = "the system default output changed";
 
 /// Where the output writes its notes (the device it opened on and why):
 /// the host's log.
@@ -434,9 +513,9 @@ impl Worker {
             };
             let opened = self.endpoint.open(reporter)?;
             let why = if std::mem::take(&mut self.followed) {
-                " (the Windows default output changed)"
+                format!(" ({DEFAULT_CHANGED})")
             } else {
-                ""
+                String::new()
             };
             (self.log)(&format!("audio output on \"{}\"{why}", opened.device));
             self.stream = Some(opened.stream);
@@ -689,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_windows_default_output_is_followed_at_the_next_chunk() {
+    fn a_new_default_output_is_followed_at_the_next_chunk() {
         let mut f = fake_devices("A");
         f.out.play(pcm(160), ItemId(1), 0, 1);
         f.out.play(pcm(160), ItemId(1), 1, 2);
@@ -702,7 +781,7 @@ mod tests {
             f.log.try_iter().collect::<Vec<_>>(),
             [
                 "audio output on \"Speakers A\"",
-                "audio output on \"Speakers B\" (the Windows default output changed)"
+                format!("audio output on \"Speakers B\" ({DEFAULT_CHANGED})").as_str()
             ]
         );
     }
@@ -843,6 +922,26 @@ mod tests {
         assert_eq!(gain(100), 1.0);
         assert_eq!(gain(150), 1.0);
         assert_eq!(gain(255), 1.0);
+    }
+
+    /// On macOS the default output's id is its Core Audio device UID: a
+    /// machine with a default output (the one cpal opens) reports it, so the
+    /// output can tell a new default from the one its stream opened on.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_macos_default_output_is_read_as_its_device_uid() {
+        let has_default = rodio::cpal::default_host()
+            .default_output_device()
+            .is_some();
+        let id = DefaultDevice::new().default_id();
+        if has_default {
+            let id = id.expect("a default output has a UID");
+            assert!(!id.trim().is_empty(), "empty UID");
+            // Stable while the default stays the same.
+            assert_eq!(DefaultDevice::new().default_id(), Some(id));
+        } else {
+            assert_eq!(id, None);
+        }
     }
 
     /// The real default device: whatever the machine has (CI runners have

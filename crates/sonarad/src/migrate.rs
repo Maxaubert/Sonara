@@ -76,7 +76,12 @@ const KOKORO_VOICES: &[&str] = &[
 pub const CHATTERBOX_REPLACEMENT: &str = "af_heart";
 
 /// The plugin's folder: `%USERPROFILE%\.sonara` (Python's `Path.home()`).
+/// None off Windows: the Python plugin ran on Windows only, so there is
+/// nothing to migrate (`--migrate-from` still works).
 pub fn default_legacy_dir() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
     ["USERPROFILE", "HOME"]
         .iter()
         .filter_map(|v| std::env::var(v).ok())

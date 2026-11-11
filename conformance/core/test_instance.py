@@ -236,10 +236,12 @@ def test_a_request_as_the_exit_is_decided_is_answered(start):
             status, body = rt.post("get", {"key": "volume"})
         except closed:
             outcomes["refused"] += 1
+            rt.close()  # the next start must not race this one's exit
             continue
         except OSError as e:
             if isinstance(getattr(e, "reason", None), closed):
                 outcomes["refused"] += 1
+                rt.close()
                 continue
             raise
         if status == 200:

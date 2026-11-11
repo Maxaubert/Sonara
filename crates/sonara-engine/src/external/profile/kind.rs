@@ -146,23 +146,36 @@ impl Preset {
     }
 }
 
+/// The wire name of the OS key store that views and saved profiles use:
+/// `credman` (Windows Credential Manager), on macOS `keychain`. A profile
+/// may name either on any platform.
+pub const OS_KEY_REF: &str = if cfg!(target_os = "macos") {
+    "keychain"
+} else {
+    "credman"
+};
+
 /// Where a profile's key comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum KeyRef {
     /// No key (a local server).
     None,
-    /// Windows Credential Manager, target `sonara:<profile id>`.
+    /// The OS key store: Windows Credential Manager (target
+    /// `sonara:<profile id>`) or the macOS Keychain (service `sonara`,
+    /// account `<profile id>`). On the wire `credman` or `keychain`, both
+    /// accepted everywhere; a view reports `OS_KEY_REF`.
     CredMan,
     /// The environment variable of this name (of the runtime's process).
     Env(String),
 }
 
 impl KeyRef {
-    /// The wire form: `"none"`, `"credman"`, `"env:NAME"`.
+    /// The wire form: `"none"`, `OS_KEY_REF` (`"credman"`, on macOS
+    /// `"keychain"`), `"env:NAME"`.
     pub fn as_wire(&self) -> String {
         match self {
             KeyRef::None => "none".into(),
-            KeyRef::CredMan => "credman".into(),
+            KeyRef::CredMan => OS_KEY_REF.into(),
             KeyRef::Env(n) => format!("env:{n}"),
         }
     }
@@ -172,11 +185,15 @@ impl KeyRef {
         let s = match v {
             None | Some(Value::Null) => return Ok(None),
             Some(Value::String(s)) => s.as_str(),
-            Some(_) => return Err("'key_ref' must be \"none\", \"credman\" or \"env:NAME\"".into()),
+            Some(_) => {
+                return Err(format!(
+                    "'key_ref' must be \"none\", \"{OS_KEY_REF}\" or \"env:NAME\""
+                ))
+            }
         };
         match s {
             "none" => Ok(Some(KeyRef::None)),
-            "credman" => Ok(Some(KeyRef::CredMan)),
+            "credman" | "keychain" => Ok(Some(KeyRef::CredMan)),
             _ => match s.strip_prefix("env:") {
                 Some(name) if env_name_ok(name) && env_name_allowed(name) => {
                     Ok(Some(KeyRef::Env(name.to_string())))
@@ -188,7 +205,7 @@ impl KeyRef {
                     "invalid environment variable name '{name}' in key_ref"
                 )),
                 None => Err(format!(
-                    "unknown key_ref '{s}': use \"none\", \"credman\" or \"env:NAME\""
+                    "unknown key_ref '{s}': use \"none\", \"{OS_KEY_REF}\" or \"env:NAME\""
                 )),
             },
         }

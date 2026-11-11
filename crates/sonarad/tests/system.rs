@@ -20,6 +20,19 @@ use tokio::net::{TcpListener, TcpStream};
 
 const TOKEN: &str = "secret";
 
+/// A chord as this OS writes it (`keymap::combo_label`): macOS says Option
+/// for Alt and Cmd for Win.
+fn combo(windows: &str) -> String {
+    use sonara_system::keymap::{combo_label, key_code, mod_mask};
+    let mut parts: Vec<&str> = windows.split('+').collect();
+    let key = parts.pop().unwrap();
+    let mods = parts
+        .iter()
+        .map(|m| mod_mask(m).unwrap())
+        .fold(0, |a, m| a | m);
+    combo_label(mods, key_code(key).unwrap())
+}
+
 /// A fresh home in `%TEMP%`, removed when the test ends.
 struct Tmp(PathBuf);
 
@@ -246,7 +259,7 @@ fn hotkeys_bind_unbind_and_reset_through_set() {
     assert_eq!(v["active"], false, "an HTTP hello does not arm the hotkeys");
     let restart = &v["bindings"][0];
     assert_eq!(restart["action"], "restart");
-    assert_eq!(restart["combo"], "Ctrl+Alt+Up");
+    assert_eq!(restart["combo"], combo("Ctrl+Alt+Up"));
     let g = ok(
         s,
         &mut session,
@@ -259,7 +272,7 @@ fn hotkeys_bind_unbind_and_reset_through_set() {
         .find(|b| b["action"] == "mute")
         .unwrap()
         .clone();
-    assert_eq!(mute["combo"], "Win+Alt+K");
+    assert_eq!(mute["combo"], combo("Win+Alt+K"));
     let on_disk: Value =
         serde_json::from_str(&std::fs::read_to_string(r.home.join("keymap.json")).unwrap())
             .unwrap();
@@ -972,7 +985,7 @@ fn a_hotkeys_set_racing_a_mute_hotkey_never_deadlocks() {
         .find(|b| b["action"] == "pause")
         .unwrap()
         .clone();
-    assert_eq!(pause["combo"], "Win+Alt+P");
+    assert_eq!(pause["combo"], combo("Win+Alt+P"));
     assert_eq!(pause["registered"], true, "the reply shows the new chord");
     assert!(eventually(|| saved(&r.home)["mute_level"] == 1));
 }

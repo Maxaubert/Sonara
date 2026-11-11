@@ -5,8 +5,8 @@ Run after building the runtime:
     cargo build -p sonarad -p sonara-hook -p sonara-cli
     python -m pytest conformance -q
 
-Set ``SONARAD`` to test another build of ``sonarad.exe`` (and
-``SONARA_HOOK`` for ``sonara-hook.exe``).
+Set ``SONARAD`` to test another build of ``sonarad`` (and
+``SONARA_HOOK`` for ``sonara-hook``).
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def sonarad_exe() -> Path:
     exe = harness.find_sonarad()
     if exe is None or not exe.is_file():
         pytest.exit(
-            "sonarad.exe not found: run 'cargo build -p sonarad' or set SONARAD",
+            "sonarad not found: run 'cargo build -p sonarad' or set SONARAD",
             returncode=4,
         )
     return exe

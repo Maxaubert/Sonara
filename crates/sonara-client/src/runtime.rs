@@ -11,8 +11,18 @@ use std::time::Duration;
 /// take (a live runtime on loopback answers at once; a dead one's port can
 /// take seconds to refuse on Windows).
 pub const PROBE: Duration = Duration::from_millis(300);
-/// The runtime's file name next to `sonara-hook.exe` and `sonara.exe`.
+/// The runtime's file name next to `sonara-hook` and `sonara`
+/// (`sonarad.exe` on Windows).
+#[cfg(windows)]
 pub const RUNTIME_EXE: &str = "sonarad.exe";
+/// The runtime's file name next to `sonara-hook` and `sonara`
+/// (`sonarad.exe` on Windows).
+#[cfg(not(windows))]
+pub const RUNTIME_EXE: &str = "sonarad";
+
+/// Whether this platform can tell who holds a port (`peer_pid`,
+/// `listener_pid`). Where it cannot, a pid in `runtime.json` is not checked.
+const OWNER_CHECK: bool = cfg!(any(windows, target_os = "macos"));
 
 /// Where and how to reach the runtime (from `runtime.json`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,12 +48,20 @@ pub fn read_runtime(home: &Path) -> Option<Runtime> {
 /// the file names a free port, and another process (of any local user) that
 /// listens on it would get the token and the text. A squatter is
 /// `PermissionDenied`, which callers treat as no runtime. A file without a
-/// pid (sonarad always writes one) is not checked.
+/// pid (sonarad always writes one) is not checked. On Windows the check is
+/// the owner of this very connection in the TCP table; on macOS it is a
+/// socket listening on 127.0.0.1 at the port in the named process (only one
+/// socket can listen there, and the connection is not accepted yet).
 pub fn connect(rt: &Runtime, timeout: Duration) -> std::io::Result<TcpStream> {
     let addr = SocketAddr::from(([127, 0, 0, 1], rt.port));
     let s = TcpStream::connect_timeout(&addr, timeout)?;
-    if let Some(pid) = rt.pid.filter(|_| cfg!(windows)) {
+    if let Some(pid) = rt.pid.filter(|_| OWNER_CHECK) {
+        #[cfg(windows)]
         let owner = peer_pid(rt.port, s.local_addr()?.port());
+        #[cfg(not(windows))]
+        let owner = u32::try_from(pid)
+            .ok()
+            .and_then(|p| listener_pid(p, rt.port));
         if owner.map(u64::from) != Some(pid) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -128,13 +146,109 @@ fn peer_pid(server_port: u16, client_port: u16) -> Option<u32> {
     None
 }
 
-/// Not Windows: never asked (the runtime is Windows only).
-#[cfg(not(windows))]
-fn peer_pid(_server_port: u16, _client_port: u16) -> Option<u32> {
+/// `pid` itself when it holds a socket listening on 127.0.0.1 at
+/// `server_port`, from its file table (libproc). A process of another user
+/// cannot be read and is no match. The offsets are those of
+/// `<sys/proc_info.h>` (`struct socket_fdinfo`, 792 bytes, the same on
+/// arm64 and x86_64).
+#[cfg(target_os = "macos")]
+fn listener_pid(pid: u32, server_port: u16) -> Option<u32> {
+    use core::ffi::{c_int, c_void};
+    extern "C" {
+        fn proc_pidinfo(
+            pid: c_int,
+            flavor: c_int,
+            arg: u64,
+            buffer: *mut c_void,
+            buffersize: c_int,
+        ) -> c_int;
+        fn proc_pidfdinfo(
+            pid: c_int,
+            fd: c_int,
+            flavor: c_int,
+            buffer: *mut c_void,
+            buffersize: c_int,
+        ) -> c_int;
+    }
+    const PROC_PIDLISTFDS: c_int = 1;
+    const PROC_PIDFDSOCKETINFO: c_int = 3;
+    const PROX_FDTYPE_SOCKET: u32 = 2;
+    const SOCKET_FDINFO: usize = 792;
+    const FAMILY: usize = 184; // psi.soi_family
+    const KIND: usize = 256; // psi.soi_kind
+    const LPORT: usize = 268; // psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport
+    const LADDR4: usize = 324; // ...insi_laddr.ina_46.i46a_addr4
+    const STATE: usize = 344; // psi.soi_proto.pri_tcp.tcpsi_state
+    const AF_INET: i32 = 2;
+    const SOCKINFO_TCP: i32 = 2;
+    const TSI_S_LISTEN: i32 = 1;
+    let pid_c = c_int::try_from(pid).ok().filter(|p| *p > 0)?;
+    let i32_at = |b: &[u8], at: usize| i32::from_ne_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+    // The fd list (struct proc_fdinfo: fd, type); read again if it filled
+    // the buffer (the process opened files meanwhile).
+    let mut fds: Vec<[u32; 2]> = Vec::new();
+    for _ in 0..4 {
+        // SAFETY: a null buffer asks for the size only.
+        let need = unsafe { proc_pidinfo(pid_c, PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
+        if need <= 0 {
+            return None;
+        }
+        let cap = need as usize / 8 + 16;
+        fds = vec![[0u32; 2]; cap];
+        let bytes = c_int::try_from(cap * 8).ok()?;
+        // SAFETY: `fds` holds `bytes` bytes; the call writes no more.
+        let got =
+            unsafe { proc_pidinfo(pid_c, PROC_PIDLISTFDS, 0, fds.as_mut_ptr().cast(), bytes) };
+        if got <= 0 {
+            return None;
+        }
+        let n = got as usize / 8;
+        fds.truncate(n);
+        if n < cap {
+            break;
+        }
+    }
+    let mut info = vec![0u64; SOCKET_FDINFO / 8];
+    for [fd, kind] in fds {
+        if kind != PROX_FDTYPE_SOCKET {
+            continue;
+        }
+        // SAFETY: `info` holds SOCKET_FDINFO bytes; the call writes no more.
+        let got = unsafe {
+            proc_pidfdinfo(
+                pid_c,
+                fd as c_int,
+                PROC_PIDFDSOCKETINFO,
+                info.as_mut_ptr().cast(),
+                SOCKET_FDINFO as c_int,
+            )
+        };
+        if usize::try_from(got).ok() != Some(SOCKET_FDINFO) {
+            continue;
+        }
+        // SAFETY: the u64 buffer of SOCKET_FDINFO bytes, read as bytes.
+        let b = unsafe { std::slice::from_raw_parts(info.as_ptr().cast::<u8>(), SOCKET_FDINFO) };
+        // insi_lport holds the port in network byte order.
+        let port = u16::from_be(i32_at(b, LPORT) as u16);
+        if i32_at(b, FAMILY) == AF_INET
+            && i32_at(b, KIND) == SOCKINFO_TCP
+            && i32_at(b, STATE) == TSI_S_LISTEN
+            && port == server_port
+            && b[LADDR4..LADDR4 + 4] == [127, 0, 0, 1]
+        {
+            return Some(pid);
+        }
+    }
     None
 }
 
-/// `sonarad.exe` next to the running program `me`, if it is there.
+/// Neither Windows nor macOS: never asked (`OWNER_CHECK`).
+#[cfg(not(any(windows, target_os = "macos")))]
+fn listener_pid(_pid: u32, _server_port: u16) -> Option<u32> {
+    None
+}
+
+/// `RUNTIME_EXE` next to the running program `me`, if it is there.
 pub fn runtime_exe(me: &Path) -> Option<PathBuf> {
     let exe = me.parent()?.join(RUNTIME_EXE);
     exe.is_file().then_some(exe)
@@ -187,9 +301,31 @@ pub fn start_runtime(exe: &Path, args: &[String]) -> std::io::Result<Child> {
     spawn_detached(exe, args)
 }
 
+/// Run the child in a new session (`setsid` before exec): no controlling
+/// terminal, and out of the caller's process group, which Claude Code may
+/// kill with the hook (the runtime would go with it and every hook would
+/// start a new one).
+#[cfg(unix)]
+fn new_session(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    extern "C" {
+        fn setsid() -> i32;
+    }
+    // SAFETY: the closure runs in the child between fork and exec and only
+    // calls setsid, which is async-signal-safe.
+    unsafe {
+        cmd.pre_exec(|| {
+            if setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
 /// Start `exe` with `args` on its own: no window, no inherited handles, out
-/// of the caller's job when Windows allows it, so it outlives the caller
-/// and the caller's host never waits for it.
+/// of the caller's job when Windows allows it (in a new session on unix),
+/// so it outlives the caller and the caller's host never waits for it.
 pub fn spawn_detached(exe: &Path, args: &[String]) -> std::io::Result<Child> {
     keep_std_handles_to_self();
     let spawn = |flags: u32| {
@@ -205,6 +341,8 @@ pub fn spawn_detached(exe: &Path, args: &[String]) -> std::io::Result<Child> {
         }
         #[cfg(not(windows))]
         let _ = flags;
+        #[cfg(unix)]
+        new_session(&mut cmd);
         cmd.spawn()
     };
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -240,7 +378,7 @@ mod tests {
     // #56: after a crash, `runtime.json` names a free port; a process of
     // another user that listens on it got the token and the turn's text.
     // A port held by a process other than the one named is not the runtime.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn a_port_held_by_another_process_is_not_the_runtime() {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -257,6 +395,34 @@ mod tests {
         // A file without a pid is not one sonarad writes, but cannot be
         // checked either.
         assert!(connect(&rt(None), PROBE).is_ok());
+    }
+
+    // The hook's process group can be killed with the hook; a runtime it
+    // starts must not be in it, or every hook would start a new runtime.
+    #[cfg(unix)]
+    #[test]
+    fn a_detached_child_leads_its_own_session() {
+        extern "C" {
+            fn getsid(pid: i32) -> i32;
+            fn getpgid(pid: i32) -> i32;
+        }
+        let mut child = spawn_detached(Path::new("/bin/sleep"), &["5".to_string()]).unwrap();
+        let pid = child.id() as i32;
+        // SAFETY: plain queries of a pid.
+        let (sid, pgid, mine) = unsafe { (getsid(pid), getpgid(pid), getsid(0)) };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(sid, pid, "the child leads a new session");
+        assert_eq!(pgid, pid, "and its own process group");
+        assert_ne!(sid, mine);
+    }
+
+    #[test]
+    fn the_runtime_exe_has_the_platform_suffix() {
+        assert_eq!(
+            RUNTIME_EXE,
+            format!("sonarad{}", std::env::consts::EXE_SUFFIX)
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 // shapes of the external engine messages (protocol 1.2).
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { connect, EnginesApi } from "../dist/esm/index.js";
+import { connect, EnginesApi, isStoredKey, KEY_STORES } from "../dist/esm/index.js";
 import { removeHome, startFake, tmpHome } from "./helpers.mjs";
 
 let home;
@@ -22,6 +22,12 @@ afterEach(async () => {
 });
 
 describe("engines", () => {
+  it("knows both names of the OS key store (credman, keychain)", () => {
+    assert.deepEqual([...KEY_STORES], ["credman", "keychain"]);
+    for (const ref of ["credman", "keychain"]) assert.equal(isStoredKey(ref), true, ref);
+    for (const ref of ["none", "env:OPENAI_API_KEY", "", null, undefined]) assert.equal(isStoredKey(ref), false, String(ref));
+  });
+
   it("is an EnginesApi on the client", () => {
     assert.ok(client.engines instanceof EnginesApi);
   });

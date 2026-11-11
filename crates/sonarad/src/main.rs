@@ -4,7 +4,7 @@
 //! 2 bad command line, 3 another instance already runs for this user and
 //! home.
 use sonara_audio::RodioOutput;
-use sonara_engine::external::keys::{CredentialStore, FileStore, KeyStore};
+use sonara_engine::external::keys::{os_store, FileStore, KeyStore};
 use sonara_engine::kokoro::{self, Kokoro};
 use sonara_engine::{Engine, LicenseClass};
 use sonara_reader::{Config, ReaderHandle, Registry};
@@ -52,7 +52,7 @@ fn main() -> ExitCode {
             return ExitCode::from(EXIT_USAGE);
         }
     };
-    match start(args) {
+    match on_worker(move || start(args)) {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, message)) => {
             eprintln!("sonarad: {message}");
@@ -61,16 +61,34 @@ fn main() -> ExitCode {
     }
 }
 
-/// `onnxruntime.dll` next to `sonarad.exe`; `SONARA_ORT_DYLIB` overrides
-/// it (a development aid: `cargo run` builds have no DLL next to them).
+/// Run the runtime. On macOS the main thread runs the Carbon event pump
+/// (hotkeys and the power-off notification arrive only there) and the
+/// runtime runs on a worker thread; elsewhere it runs here.
+fn on_worker<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    #[cfg(target_os = "macos")]
+    return sonara_system::mac::run_main(f);
+    #[cfg(not(target_os = "macos"))]
+    f()
+}
+
+/// ONNX Runtime's file name next to `sonarad` (`packaging/runtime_dlls.py`
+/// stages it).
+#[cfg(target_os = "macos")]
+const ONNXRUNTIME: &str = "libonnxruntime.dylib";
+#[cfg(not(target_os = "macos"))]
+const ONNXRUNTIME: &str = "onnxruntime.dll";
+
+/// `onnxruntime.dll` next to `sonarad.exe` (`libonnxruntime.dylib` on
+/// macOS); `SONARA_ORT_DYLIB` overrides it (a development aid: `cargo run`
+/// builds have no library next to them).
 fn onnxruntime_dll() -> PathBuf {
     if let Some(p) = std::env::var_os("SONARA_ORT_DYLIB").filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
     }
     std::env::current_exe()
         .ok()
-        .and_then(|e| e.parent().map(|d| d.join("onnxruntime.dll")))
-        .unwrap_or_else(|| PathBuf::from("onnxruntime.dll"))
+        .and_then(|e| e.parent().map(|d| d.join(ONNXRUNTIME)))
+        .unwrap_or_else(|| PathBuf::from(ONNXRUNTIME))
 }
 
 /// The engines, the one to start with, and what external engine profiles
@@ -79,8 +97,9 @@ struct Built {
     registry: Arc<Registry>,
     /// The saved or named engine, else the default choice.
     chosen: String,
-    /// Kokoro when ONNX Runtime is installed (or there is no OneCore), else
-    /// OneCore; `fake` in test runs.
+    /// Kokoro when ONNX Runtime is installed (or there is no OS engine),
+    /// else the OS engine (OneCore, or `macos` on macOS); `fake` in test
+    /// runs.
     default_engine: String,
     kokoro: Option<Kokoro>,
     /// What a profile speaks with when it cannot (Kokoro, or the fake
@@ -100,9 +119,10 @@ fn classes(external: bool) -> Vec<LicenseClass> {
 }
 
 /// The engines and the one to start with. `fake` runs alone (tests,
-/// conformance: no Kokoro, so nothing is ever downloaded). Otherwise OneCore
-/// and Kokoro, with OneCore speaking while Kokoro is not ready; without a
-/// named engine, Kokoro when ONNX Runtime is installed, else OneCore.
+/// conformance: no Kokoro, so nothing is ever downloaded). Otherwise the OS
+/// engine (OneCore; `macos` on macOS) and Kokoro, with the OS engine
+/// speaking while Kokoro is not ready; without a named engine, Kokoro when
+/// ONNX Runtime is installed, else the OS engine.
 fn build_registry(engine: Option<&str>, home: &Home, external: bool) -> Result<Built, String> {
     let allowed = classes(external);
     if engine == Some("fake") {
@@ -124,17 +144,17 @@ fn build_registry(engine: Option<&str>, home: &Home, external: bool) -> Result<B
         home.models().join(kokoro::download::MODEL_SUBDIR),
         runtime.clone(),
     );
-    config.fallback = registry.get(sonara_engine::onecore::ID.as_str()).ok();
-    let has_onecore = config.fallback.is_some();
+    config.fallback = registry.get(sonara_engine::OS_ENGINE.as_str()).ok();
+    let has_os_engine = config.fallback.is_some();
     let k = Kokoro::new(config);
     let shared: Arc<dyn Engine> = Arc::new(k.clone());
     registry
         .register(shared.clone())
         .map_err(|e| e.to_string())?;
-    let default_engine = if runtime.is_file() || !has_onecore {
+    let default_engine = if runtime.is_file() || !has_os_engine {
         kokoro::ID.to_string()
     } else {
-        sonara_engine::onecore::ID.to_string()
+        sonara_engine::OS_ENGINE.to_string()
     };
     let fallback_voice = if shared.voices().iter().any(|v| v.id == "af_sarah") {
         "af_sarah".to_string()
@@ -207,7 +227,7 @@ fn build_reader(
 /// Where profile keys are kept.
 fn key_store(kind: KeysKind, home: &Home) -> Arc<dyn KeyStore> {
     match kind {
-        KeysKind::Windows => Arc::new(CredentialStore),
+        KeysKind::Os => os_store(),
         KeysKind::Fake => Arc::new(FileStore::new(home.dir.join("fake-keys.json"))),
     }
 }
@@ -219,9 +239,11 @@ fn system_platform(kind: SystemKind, home: &Home) -> Option<sonara_system::Platf
             Some(sonara_system::fake::Fake::file(home.dir.join("fake-system.json")).platform())
         }
         #[cfg(windows)]
-        SystemKind::Windows => Some(sonara_system::win::platform()),
-        #[cfg(not(windows))]
-        SystemKind::Windows => None,
+        SystemKind::Os => Some(sonara_system::win::platform()),
+        #[cfg(target_os = "macos")]
+        SystemKind::Os => Some(sonara_system::mac::platform()),
+        #[cfg(not(any(windows, target_os = "macos")))]
+        SystemKind::Os => None,
     }
 }
 
@@ -235,7 +257,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         Some(home::key(&home))
     };
     let name = instance::mutex_name(&sid, key.as_deref());
-    let instance = match instance::acquire(&name) {
+    let instance = match instance::acquire(&name, &home.dir) {
         Ok(i) => i,
         Err(AcquireError::AlreadyRunning) => {
             let pid = runtime_file::read_pid(&home.runtime_json())
@@ -363,6 +385,28 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     result.map_err(fail)
 }
 
+/// A signal to exit on: Ctrl+C, and on unix also SIGTERM (`kill`, a
+/// logout or shutdown) and SIGHUP, so speech stops, other apps are put back
+/// and `runtime.json` is removed as on any clean exit.
+async fn exit_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let (Ok(mut term), Ok(mut hup)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        ) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+                _ = hup.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run(
     args: &args::Args,
@@ -478,7 +522,7 @@ async fn run(
 
     let why = tokio::select! {
         why = life.wait_exit() => why,
-        _ = tokio::signal::ctrl_c() => {
+        _ = exit_signal() => {
             life.request_exit(ExitReason::Signal);
             ExitReason::Signal
         }
@@ -496,4 +540,34 @@ async fn run(
         let _ = tokio::task::spawn_blocking(move || s.shutdown()).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_no_runtime_next_to_the_binary_the_os_engine_speaks_and_is_the_default() {
+        // The test binary has no onnxruntime library beside it.
+        if std::env::var_os("SONARA_ORT_DYLIB").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("sonarad-build-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = Home {
+            dir: dir.clone(),
+            is_default: false,
+        };
+        let built = build_registry(None, &home, false).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(built.default_engine, sonara_engine::OS_ENGINE.as_str());
+        assert_eq!(built.chosen, sonara_engine::OS_ENGINE.as_str());
+        assert!(built
+            .registry
+            .get(sonara_engine::OS_ENGINE.as_str())
+            .is_ok());
+        if cfg!(target_os = "macos") {
+            assert_eq!(sonara_engine::OS_ENGINE.as_str(), "macos");
+        }
+    }
 }

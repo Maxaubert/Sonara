@@ -126,7 +126,8 @@ pub struct ItemVoice {
 }
 
 /// The engines this build can offer, under the default licence policy
-/// (permissive and OS engines): OneCore on Windows with feature `onecore`.
+/// (permissive and OS engines): OneCore on Windows with feature `onecore`,
+/// the `say` engine on macOS with feature `macos-say`.
 pub fn default_registry() -> Registry {
     registry_with(&[
         sonara_engine::LicenseClass::Permissive,
@@ -136,13 +137,19 @@ pub fn default_registry() -> Registry {
 
 /// The engines this build can offer, in a registry that allows `allowed`
 /// (a host that takes external engines adds `LicenseClass::External`).
-/// OneCore is registered when the OS class is allowed.
+/// The OS engine is registered when the OS class is allowed.
 pub fn registry_with(allowed: &[sonara_engine::LicenseClass]) -> Registry {
     let registry = Registry::new(allowed);
     #[cfg(all(windows, feature = "onecore"))]
     if registry.allows(sonara_engine::LicenseClass::Os) {
         registry
             .register(Arc::new(sonara_engine::onecore::OneCore::new()))
+            .expect("the OS class is allowed");
+    }
+    #[cfg(all(target_os = "macos", feature = "macos-say"))]
+    if registry.allows(sonara_engine::LicenseClass::Os) {
+        registry
+            .register(Arc::new(sonara_engine::macos_say::MacSay::new()))
             .expect("the OS class is allowed");
     }
     registry

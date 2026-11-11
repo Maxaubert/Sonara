@@ -2,15 +2,17 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake|ID] \
-[--output device|null|wav:DIR] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
-       [--keys windows|fake] [--no-external-engines] [--migrate-from DIR] [--version]
+pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|macos|fake|ID] \
+[--output device|null|wav:DIR] [--system os|fake] [--idle-exit SECONDS] [--standalone]
+       [--keys os|fake] [--no-external-engines] [--migrate-from DIR] [--version]
 
-  --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
+  --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara;
+                      on macOS ~/Library/Application Support/Sonara)
   --engine ID         engine to start with (default: the saved one, else kokoro
                       when onnxruntime.dll is next to sonarad.exe, else
-                      onecore). Kokoro downloads its model on first use and
-                      speaks with onecore until it is ready. 'fake' is a
+                      onecore; on macOS libonnxruntime.dylib and macos).
+                      Kokoro downloads its model on first use and speaks
+                      with onecore (macos) until it is ready. 'fake' is a
                       deterministic tone engine for tests and conformance runs
                       (no Kokoro, no download); a saved external engine still
                       applies, with the fake engine as its fallback
@@ -18,12 +20,14 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
                       a silent output that keeps real time, or 'wav:DIR', the
                       null output that also writes every chunk it is given
                       to a WAV file in DIR (a testing aid)
-  --system KIND       platform of the 'system' extension: 'windows' (default)
-                      or 'fake', a testing aid that keeps fake apps, media
-                      and hotkeys in <home>\\fake-system.json
-  --keys KIND         where external engine keys are kept: 'windows'
-                      (default, Windows Credential Manager) or 'fake', a
-                      testing aid that keeps them in <home>\\fake-keys.json
+  --system KIND       platform of the 'system' extension: 'os' (default;
+                      'windows' is the same) or 'fake', a testing aid that
+                      keeps fake apps, media and hotkeys in
+                      <home>\\fake-system.json
+  --keys KIND         where external engine keys are kept: 'os' (default:
+                      Windows Credential Manager, the macOS Keychain;
+                      'windows' is an alias) or 'fake', a testing aid
+                      that keeps them in <home>\\fake-keys.json
   --no-external-engines
                       refuse external engines (speech servers and cloud
                       services the user adds): no 'engines' capability
@@ -32,7 +36,7 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
   --standalone        never exit for idleness
   --migrate-from DIR  import the Python plugin's settings from DIR when the
                       home has no config.json yet (default: %USERPROFILE%\\.sonara,
-                      and only for the default home)";
+                      and only for the default home on Windows)";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputKind {
@@ -46,8 +50,9 @@ pub enum OutputKind {
 /// Where external engine keys are kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeysKind {
-    /// Windows Credential Manager.
-    Windows,
+    /// The OS key store: Windows Credential Manager, the macOS Keychain
+    /// (`--keys os`, alias `windows`).
+    Os,
     /// `<home>\fake-keys.json` (tests).
     Fake,
 }
@@ -55,7 +60,8 @@ pub enum KeysKind {
 /// The platform behind the `system` extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemKind {
-    Windows,
+    /// This operating system's (`os`, or `windows` as before).
+    Os,
     /// Fake apps, media and hotkeys in a JSON file in the home (tests).
     Fake,
 }
@@ -90,10 +96,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     let mut engine = None;
     let mut migrate_from = None;
     let mut output = None;
-    let mut system = SystemKind::Windows;
+    let mut system = SystemKind::Os;
     let mut idle_exit = crate::lifetime::DEFAULT_IDLE_EXIT;
     let mut standalone = false;
-    let mut keys = KeysKind::Windows;
+    let mut keys = KeysKind::Os;
     let mut external_engines = true;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -115,7 +121,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             }
             "--system" => {
                 system = match value("--system")?.as_str() {
-                    "windows" => SystemKind::Windows,
+                    "os" | "windows" => SystemKind::Os,
                     "fake" => SystemKind::Fake,
                     other => return Err(format!("unknown --system '{other}'")),
                 }
@@ -132,7 +138,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             "--standalone" => standalone = true,
             "--keys" => {
                 keys = match value("--keys")?.as_str() {
-                    "windows" => KeysKind::Windows,
+                    "os" | "windows" => KeysKind::Os,
                     "fake" => KeysKind::Fake,
                     other => return Err(format!("unknown --keys '{other}'")),
                 }
@@ -179,9 +185,9 @@ mod tests {
         assert_eq!(a.output, OutputKind::Device);
         assert_eq!(a.idle_exit, Duration::from_secs(30));
         assert!(!a.standalone);
-        assert_eq!(a.system, SystemKind::Windows);
+        assert_eq!(a.system, SystemKind::Os);
         assert_eq!(a.migrate_from, None);
-        assert_eq!(a.keys, KeysKind::Windows);
+        assert_eq!(a.keys, KeysKind::Os);
         assert!(a.external_engines);
     }
 
@@ -190,6 +196,9 @@ mod tests {
         let a = run(&["--keys", "fake", "--no-external-engines"]);
         assert_eq!(a.keys, KeysKind::Fake);
         assert!(!a.external_engines);
+        // `os` is this platform's store; `windows` stays an alias of it.
+        assert_eq!(run(&["--keys", "os"]).keys, KeysKind::Os);
+        assert_eq!(run(&["--keys", "windows"]).keys, KeysKind::Os);
         assert!(parse(["--keys".to_string(), "vault".to_string()]).is_err());
     }
 
@@ -213,6 +222,12 @@ mod tests {
     #[test]
     fn the_system_platform_can_be_the_fake() {
         assert_eq!(run(&["--system", "fake"]).system, SystemKind::Fake);
+        assert_eq!(run(&["--system", "os"]).system, SystemKind::Os);
+        assert_eq!(
+            run(&["--system", "windows"]).system,
+            SystemKind::Os,
+            "the old name still works"
+        );
         assert!(parse(["--system".to_string(), "linux".to_string()]).is_err());
     }
 

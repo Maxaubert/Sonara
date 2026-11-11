@@ -15,6 +15,7 @@ ones actually ran.
 | OneCore voices | `cargo test -p sonara-engine --test onecore_live -- --ignored` |
 | L4 audio, media and hotkeys (plays sound, presses media keys) | `cargo test -p sonara-system --test win_live -- --ignored` |
 | Credential Manager round trip | `cargo test -p sonara-engine --test credman_live -- --ignored` |
+| macOS voices (`say`; writes WAVs, plays nothing) | `cargo test -p sonara-engine --test macos_say_live -- --ignored --nocapture` |
 | One sentence end to end | `cargo run -p sonara-reader --example say -- --engine onecore "Hello."` |
 | Kokoro | `SONARA_KOKORO_MODELS=<folder with the two model files> cargo test -p sonara-engine --release --test kokoro_live -- --ignored --nocapture` (first `python packaging/runtime_dlls.py stage target/release`) |
 | External engines | `cargo test -p sonara-engine --test external_live -- --ignored --nocapture` |

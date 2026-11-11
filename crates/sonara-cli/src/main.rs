@@ -28,7 +28,8 @@ const USAGE: &str = "usage: sonara <command>
   engines ...        the speech engines you added (sonara engines help)
   version            print the version
 
-Environment: SONARA_HOME (the home, default %LOCALAPPDATA%\\Sonara),
+Environment: SONARA_HOME (the home, default %LOCALAPPDATA%\\Sonara, on macOS
+~/Library/Application Support/Sonara),
 SONARA_NO_BROWSER (print the settings URL only), SONARA_RUNTIME_ARGS
 (extra sonarad arguments).";
 
@@ -320,7 +321,9 @@ fn hooks_row() -> Row {
     )
 }
 
-/// The Python plugin's daemon, which would hold the same hotkeys.
+/// The Python plugin's daemon, which would hold the same hotkeys (it ran
+/// on Windows only).
+#[cfg(windows)]
 fn legacy_row() -> Option<Row> {
     let profile = env("USERPROFILE").filter(|p| !p.is_empty())?;
     let dir = Path::new(&profile).join(".sonara");
@@ -351,7 +354,7 @@ fn doctor(paths: &Paths) -> ExitCode {
         ),
         file_row(
             &paths.exe_dir,
-            "sonara-hook.exe",
+            &format!("sonara-hook{}", std::env::consts::EXE_SUFFIX),
             Status::Fail,
             "reinstall: /sonara:start",
         ),
@@ -456,6 +459,7 @@ fn doctor(paths: &Paths) -> ExitCode {
         }
     }
     rows.push(hooks_row());
+    #[cfg(windows)]
     rows.extend(legacy_row());
     for r in &rows {
         println!("{r}");
@@ -475,9 +479,10 @@ fn uninstall(paths: &Paths, exe: &Path, keep: &[Keep]) -> Result<(), String> {
         Err(e) => return Err(format!("Sonara did not stop ({e}); nothing was removed")),
     }
     let r = uninstall::remove_all(&paths.home, paths.runtime_root.as_deref(), exe, keep);
-    let (keys, key_failures) = uninstall::remove_credentials(&uninstall::WindowsCredentials, keep);
+    let (store, store_name) = uninstall::os_credentials();
+    let (keys, key_failures) = uninstall::remove_credentials(store, keep);
     for id in &keys {
-        println!("Removed the key of engine {id} from Credential Manager");
+        println!("Removed the key of engine {id} from {store_name}");
     }
     for (id, e) in &key_failures {
         println!("Could not remove the key of engine {id} ({e})");

@@ -7,6 +7,11 @@
 //! `%LOCALAPPDATA%\Sonara` it also covers the home's canonical path: an
 //! instance is found through its home's `runtime.json`, so separate homes
 //! (tests, portable bundles) are separate instances.
+//!
+//! On unix (macOS) the lock is `flock` on `<home>/sonarad.lock` instead of
+//! the mutex (one per home, and the default home is per user), the user is
+//! the uid, user-only means mode 0600, and the random bytes come from the
+//! system (`getrandom`).
 
 /// FNV-1a, 64 bit.
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -27,9 +32,12 @@ pub fn mutex_name(sid: &str, home_key: Option<&str>) -> String {
     format!("Local\\Sonara-Runtime-{:016x}", fnv1a64(key.as_bytes()))
 }
 
+/// The lock file in the home on unix (`flock`).
+pub const LOCK_FILE: &str = "sonarad.lock";
+
 #[derive(Debug)]
 pub enum AcquireError {
-    /// Another instance holds the mutex.
+    /// Another instance holds the mutex (the lock on unix).
     AlreadyRunning,
     Os(String),
 }
@@ -84,7 +92,8 @@ mod win {
         }
     }
 
-    pub fn acquire(name: &str) -> Result<Instance, AcquireError> {
+    /// The named mutex `name` (`home` is for unix).
+    pub fn acquire(name: &str, _home: &Path) -> Result<Instance, AcquireError> {
         let w = wide(name);
         unsafe {
             let handle = CreateMutexW(None, false, PCWSTR(w.as_ptr()))
@@ -214,18 +223,80 @@ mod win {
 #[cfg(windows)]
 pub use win::{acquire, dacl_summary, random_bytes, restrict_to_user, user_sid, Instance};
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+mod unix {
+    use super::{AcquireError, LOCK_FILE};
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::path::Path;
+
+    /// Holds the `flock` on the home's lock file until dropped (or the
+    /// process ends: the system releases it with the last descriptor).
+    pub struct Instance {
+        _file: File,
+    }
+
+    /// The exclusive lock on `<home>/sonarad.lock` (`name` is for
+    /// Windows). The file stays; only the lock matters.
+    pub fn acquire(_name: &str, home: &Path) -> Result<Instance, AcquireError> {
+        let path = home.join(LOCK_FILE);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)
+            .map_err(|e| AcquireError::Os(format!("cannot open {}: {e}", path.display())))?;
+        // SAFETY: flock on a descriptor this function owns.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(Instance { _file: file });
+        }
+        let e = std::io::Error::last_os_error();
+        if e.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            Err(AcquireError::AlreadyRunning)
+        } else {
+            Err(AcquireError::Os(format!(
+                "cannot lock {}: {e}",
+                path.display()
+            )))
+        }
+    }
+
+    /// The current user's uid as text (the role of the SID on Windows).
+    pub fn user_sid() -> Result<String, String> {
+        // SAFETY: getuid cannot fail.
+        Ok(unsafe { libc::getuid() }.to_string())
+    }
+
+    /// Mode 0600: only the owner (this user) reads and writes `path`.
+    pub fn restrict_to_user(path: &Path, _uid: &str) -> Result<(), String> {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("setting the mode of {}: {e}", path.display()))
+    }
+
+    pub fn random_bytes(buf: &mut [u8]) -> Result<(), String> {
+        getrandom::getrandom(buf).map_err(|e| format!("getrandom: {e}"))
+    }
+}
+
+#[cfg(unix)]
+pub use unix::{acquire, random_bytes, restrict_to_user, user_sid, Instance};
+
+#[cfg(not(any(windows, unix)))]
 mod other {
-    //! sonarad runs on Windows only (R4); these keep the crate building
+    //! sonarad runs on Windows and macOS; these keep the crate building
     //! elsewhere and fail at start.
     use super::AcquireError;
     use std::path::Path;
 
     pub struct Instance;
 
-    const MSG: &str = "sonarad runs on Windows only";
+    const MSG: &str = "sonarad runs on Windows and macOS only";
 
-    pub fn acquire(_name: &str) -> Result<Instance, AcquireError> {
+    pub fn acquire(_name: &str, _home: &Path) -> Result<Instance, AcquireError> {
         Err(AcquireError::Os(MSG.into()))
     }
 
@@ -242,7 +313,7 @@ mod other {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 pub use other::{acquire, random_bytes, restrict_to_user, user_sid, Instance};
 
 /// A fresh token: 32 random bytes as hex.
@@ -283,10 +354,45 @@ mod tests {
     #[test]
     fn a_second_acquire_of_the_same_name_fails() {
         let name = format!("Local\\Sonara-Runtime-test-{}", std::process::id());
-        let first = acquire(&name).unwrap();
-        assert!(matches!(acquire(&name), Err(AcquireError::AlreadyRunning)));
+        let home = std::env::temp_dir();
+        let first = acquire(&name, &home).unwrap();
+        assert!(matches!(
+            acquire(&name, &home),
+            Err(AcquireError::AlreadyRunning)
+        ));
         drop(first);
-        acquire(&name).unwrap();
+        acquire(&name, &home).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_second_acquire_of_the_same_home_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = std::env::temp_dir().join(format!("sonarad-lock-{}", std::process::id()));
+        let other = home.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let first = acquire("x", &home).unwrap();
+        assert!(matches!(
+            acquire("x", &home),
+            Err(AcquireError::AlreadyRunning)
+        ));
+        let elsewhere = acquire("x", &other).unwrap();
+        let mode = std::fs::metadata(home.join(LOCK_FILE))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+        drop(first);
+        acquire("x", &home).unwrap();
+        drop(elsewhere);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_user_is_the_uid() {
+        let uid = user_sid().unwrap();
+        assert!(uid.parse::<u32>().is_ok(), "{uid}");
     }
 
     #[cfg(windows)]

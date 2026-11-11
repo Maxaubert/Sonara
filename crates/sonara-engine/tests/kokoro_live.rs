@@ -7,11 +7,13 @@
 //! cargo test -p sonara-engine --release --test kokoro_live -- --ignored --nocapture
 //! ```
 //!
-//! `SONARA_ORT_DYLIB` overrides the DLL (default: the fetched one under
-//! `target/onnxruntime/`); `SONARA_KOKORO_WAV=<folder>` writes each line as
-//! a WAV for listening. Nothing is downloaded: the test copies the model
+//! (On macOS: `export SONARA_KOKORO_MODELS=...`; `runtime_dlls.py fetch`
+//! fetches the `osx-arm64` build there.) `SONARA_ORT_DYLIB` overrides the
+//! library (default: the fetched one under `target/onnxruntime/`);
+//! `SONARA_KOKORO_WAV=<folder>` writes each line as a WAV for listening.
+//! Nothing is downloaded and nothing is played: the test copies the model
 //! files into a temp folder of its own.
-#![cfg(all(windows, feature = "kokoro"))]
+#![cfg(all(any(windows, target_os = "macos"), feature = "kokoro"))]
 mod common;
 
 use sonara_engine::kokoro::download::{pinned_files, Backoff, BASE_URL, MODEL_FILE, VOICES_FILE};
@@ -20,6 +22,7 @@ use sonara_engine::{Engine, PcmChunk};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 fn peak_ram_mb() -> f64 {
     #[repr(C)]
     #[derive(Default)]
@@ -41,6 +44,43 @@ fn peak_ram_mb() -> f64 {
     };
     unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) };
     c.peak_working_set as f64 / 1e6
+}
+
+/// The peak resident set (`getrusage`; `ru_maxrss` is in bytes on macOS).
+#[cfg(target_os = "macos")]
+fn peak_ram_mb() -> f64 {
+    /// `struct rusage` on 64-bit macOS: two `timeval`s (16 bytes each),
+    /// then 14 `long`s, `ru_maxrss` first.
+    #[repr(C)]
+    struct Rusage {
+        times: [i64; 4],
+        maxrss: i64,
+        rest: [i64; 13],
+    }
+    extern "C" {
+        fn getrusage(who: i32, usage: *mut Rusage) -> i32;
+    }
+    const RUSAGE_SELF: i32 = 0;
+    let mut u = Rusage {
+        times: [0; 4],
+        maxrss: 0,
+        rest: [0; 13],
+    };
+    // SAFETY: `u` is a writable `struct rusage` of the right size.
+    if unsafe { getrusage(RUSAGE_SELF, &mut u) } != 0 {
+        return 0.0;
+    }
+    u.maxrss as f64 / 1e6
+}
+
+/// The ONNX Runtime `runtime_dlls.py fetch` leaves under `target/`.
+fn fetched_runtime() -> PathBuf {
+    let ort = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/onnxruntime");
+    if cfg!(target_os = "macos") {
+        ort.join("1.28.2-osx-arm64/libonnxruntime.dylib")
+    } else {
+        ort.join("1.28.2/onnxruntime.dll")
+    }
 }
 
 const LINES: &[&str] = &[
@@ -66,7 +106,7 @@ const LINES: &[&str] = &[
 ];
 
 #[test]
-#[ignore = "live: needs the Kokoro model files (SONARA_KOKORO_MODELS) and onnxruntime.dll"]
+#[ignore = "live: needs the Kokoro model files (SONARA_KOKORO_MODELS) and ONNX Runtime"]
 fn kokoro_speaks_with_the_real_model() {
     let source = PathBuf::from(
         std::env::var("SONARA_KOKORO_MODELS")
@@ -74,10 +114,7 @@ fn kokoro_speaks_with_the_real_model() {
     );
     let runtime = std::env::var("SONARA_ORT_DYLIB")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target/onnxruntime/1.28.2/onnxruntime.dll")
-        });
+        .unwrap_or_else(|_| fetched_runtime());
     let tmp = common::TempDir::new("live");
     let dir = tmp.path().join("kokoro/v1.0");
     std::fs::create_dir_all(&dir).unwrap();
@@ -148,7 +185,7 @@ fn kokoro_speaks_with_the_real_model() {
     }
     let rtf = synth.as_secs_f64() / audio;
     println!(
-        "corpus: synth {:.2} s, audio {:.2} s, RTF {:.3}, peak working set {:.0} MB",
+        "corpus: synth {:.2} s, audio {:.2} s, RTF {:.3}, peak memory {:.0} MB",
         synth.as_secs_f64(),
         audio,
         rtf,

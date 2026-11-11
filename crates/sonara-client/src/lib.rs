@@ -4,10 +4,11 @@
 //! crate: it speaks the protocol only and links no runtime crate (R7).
 //!
 //! - `home`: where the home is (`SONARA_HOME`, else
-//!   `%LOCALAPPDATA%\Sonara`), the names of `runtime.json` and of the stop
+//!   `%LOCALAPPDATA%\Sonara` on Windows and
+//!   `~/Library/Application Support/Sonara` on macOS), the names of `runtime.json` and of the stop
 //!   sentinel `stopped`.
 //! - `runtime`: `runtime.json` read back, a connection to the runtime it
-//!   names, and the runtime started detached (`sonarad.exe` next to the
+//!   names, and the runtime started detached (`sonarad` next to the
 //!   caller, extra arguments from `SONARA_RUNTIME_ARGS`).
 //! - `hello`: the `hello` a client sends first (`Hello`).
 //! - `batch`: fire and forget, as a hook needs it: `hello` and a batch of
@@ -24,7 +25,10 @@ pub mod runtime;
 pub use batch::{deliver, send, send_on, worth_trying, Delivery};
 pub use conn::{attach, Conn, TIMEOUT};
 pub use hello::{Hello, PRODUCT};
-pub use home::{default_home, home, home_from, stopped, RUNTIME_FILE, STOPPED};
+pub use home::{
+    default_home, home, home_from, macos_home, stopped, windows_home, BASE_VAR, RUNTIME_FILE,
+    STOPPED,
+};
 pub use runtime::{
     connect, read_runtime, runtime_args, runtime_exe, spawn_detached, start_runtime, Runtime,
     PROBE, RUNTIME_EXE,

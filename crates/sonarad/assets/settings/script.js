@@ -14,6 +14,10 @@ try { sessionStorage.setItem("sonara-token", TOKEN); } catch (e) {}
 // And the ranges and defaults of its whole-number settings, from its
 // SCHEMA: {key: {min, max, default}} (#257).
 const SCHEMA = /*__SONARA_SCHEMA__*/{};
+// The runtime's platform (settings_page.rs): how modifiers are named, and
+// whether other apps can be ducked (not on macOS: duck pauses media).
+const PLATFORM = /*__SONARA_PLATFORM__*/{"os": "windows", "duck": true};
+const MAC = PLATFORM.os === "macos";
 
 const $ = id => document.getElementById(id);
 class ApiError extends Error {}
@@ -212,17 +216,19 @@ function wireSegments(id, onPick) {
     onPick(b.dataset.value);
   }));
   group.addEventListener("keydown", e => {
-    const i = btns.indexOf(document.activeElement);
+    // Arrows skip an option this platform lacks (a disabled button).
+    const live = btns.filter(b => !b.disabled);
+    const i = live.indexOf(document.activeElement);
     if (i < 0) return;
     let j = null;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % btns.length;
-    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + btns.length) % btns.length;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % live.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + live.length) % live.length;
     else if (e.key === "Home") j = 0;
-    else if (e.key === "End") j = btns.length - 1;
+    else if (e.key === "End") j = live.length - 1;
     if (j === null) return;
     e.preventDefault();
-    btns[j].focus();
-    btns[j].click();
+    live[j].focus();
+    live[j].click();
   });
 }
 function setSwitch(id, on) {
@@ -336,6 +342,10 @@ function render() {
   if (s.volume !== undefined) { setVal("volume", s.volume); setText("volume-out", s.volume + " %"); }
   if (s.audio_mode !== undefined) {
     setSegments("audio-seg", s.audio_mode);
+    // No duck on this platform: the option is locked and a note says what
+    // `duck` does instead (pauses media).
+    if (!PLATFORM.duck) setDisabled(document.querySelector('#audio-seg [data-value="duck"]'), true);
+    $("duck-unavailable").hidden = PLATFORM.duck;
     // The duck level applies only while ducking: hidden and locked otherwise.
     gate($("duck-row"), s.audio_mode !== "duck");
     $("duck-row").hidden = s.audio_mode !== "duck";
@@ -404,7 +414,7 @@ function renderNow(st) {
   if (dot.className !== want) dot.className = want;
 }
 
-const ENGINE_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows"};
+const ENGINE_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows", macos: "macOS"};
 const ENGINE_STATES = {loading: "loading", downloading: "downloading voices",
                        waiting: "download failed, retrying soon", unavailable: "cannot run on this PC"};
 function engineText(st) {
@@ -536,8 +546,12 @@ const ACTION_NAMES = {restart: "Back / hold: from the start", flush: "Next / hol
                       next_question: "Next, second key / hold: skip the rest"};
 // Intel graphics drivers rotate the screen with Ctrl+Alt+arrows (#283).
 const ROTATION_HINT = " Intel graphics uses Ctrl+Alt+arrows to rotate the screen: turn its hotkeys off in Intel Graphics Command Center, or rebind with Win.";
+// macOS: Mission Control and Spaces use Ctrl+arrows.
+const MISSION_CONTROL_HINT = " macOS may use it for Mission Control or Spaces: change that in System Settings, Keyboard, Keyboard Shortcuts, or rebind with Cmd.";
 function renderHotkeys(h) {
   $("hotkeys-inactive").hidden = !!h.active;
+  // Ctrl+Option is VoiceOver's modifier (macOS defaults, user decision 2026-11-11).
+  $("voiceover-note").hidden = !(MAC && h.bindings.some(b => /^Ctrl\+Option\+/.test(b.combo || "")));
   for (const b of h.bindings) {
     const row = document.querySelector('[data-action="' + b.action + '"]');
     if (!row || row.classList.contains("listen")) continue;
@@ -561,12 +575,13 @@ function renderHotkeys(h) {
     if (b.error === "already_owned") {
       text = "Another program owns " + (b.combo || "this shortcut") + ". Pick another one.";
       if (/^Ctrl\+Alt\+(Up|Down|Left|Right)$/.test(b.combo || "")) text += ROTATION_HINT;
+      if (MAC && /^Ctrl\+.*(Up|Down|Left|Right)$/.test(b.combo || "")) text += MISSION_CONTROL_HINT;
     } else if (b.error === "bound_twice") {
       // #43: one of our own actions holds the chord.
       text = (b.combo || "This shortcut") + " is also bound to " +
         (ACTION_NAMES[b.taken_by] || b.taken_by || "another action") + ". Pick another one.";
     } else if (b.error) {
-      text = "Windows refused this shortcut (" + b.error + ").";
+      text = (MAC ? "macOS" : "Windows") + " refused this shortcut (" + b.error + ").";
     }
     const copy = row.querySelector(".key-copy");
     let warn = copy.querySelector(".warn");
@@ -580,8 +595,12 @@ function renderHotkeys(h) {
   }
 }
 // How a key shows on its keycap: "ctrl" is Ctrl, "up" is Up, "s" is S.
-const KEY_NAMES = {ctrl: "Ctrl", alt: "Alt", shift: "Shift", win: "Win", pageup: "PgUp", pagedown: "PgDn",
+// macOS names Alt Option and Win Cmd (the runtime's `combo` reads the same).
+const KEY_NAMES = {ctrl: "Ctrl", alt: MAC ? "Option" : "Alt", option: "Option", shift: "Shift",
+                   win: MAC ? "Cmd" : "Win", cmd: MAC ? "Cmd" : "Win", pageup: "PgUp", pagedown: "PgDn",
                    leftbracket: "[", rightbracket: "]", period: "."};
+// The modifiers a hotkey needs one of (E13), as this platform names them.
+const NEEDED_MODS = MAC ? "Ctrl, Option or Cmd" : "Ctrl, Alt or Win";
 function keyName(k) {
   return KEY_NAMES[k] || (k.length === 1 ? k.toUpperCase() : k.charAt(0).toUpperCase() + k.slice(1));
 }
@@ -613,7 +632,7 @@ function armCapture(row, action) {
     if (e.metaKey) mods.push("win");
     if (!mods.some(m => m === "ctrl" || m === "alt" || m === "win")) {
       // E13: without Ctrl, Alt or Win a global hotkey takes the key away from every app.
-      showState("Add Ctrl, Alt or Win: a hotkey without one would block that key in every app", true);
+      showState("Add " + NEEDED_MODS + ": a hotkey without one would block that key in every app", true);
       return;
     }
     let key = e.key.toLowerCase();
@@ -653,7 +672,7 @@ document.querySelectorAll("[data-action]").forEach(row => {
   row.querySelector(".unbind").addEventListener("click", () => change("hotkeys", {action, key: null}, "Shortcut"));
 });
 $("keymap-reset").addEventListener("click", () => {
-  if (!confirm("Reset every hotkey to the Ctrl+Alt defaults?")) return;
+  if (!confirm("Reset every hotkey to the " + (MAC ? "Ctrl+Option" : "Ctrl+Alt") + " defaults?")) return;
   cancelCapture();
   change("hotkeys", "reset", "Hotkeys");
 });
@@ -745,9 +764,10 @@ let editing = null;       // the id of the profile the form edits, or null for a
 const testResults = {};   // id -> {ok, text}, shown under the profile
 
 function engineName(id) {
-  if (ENGINE_NAMES[id]) return ENGINE_NAMES[id];
+  // A profile first: off macOS, "macos" may be a user's profile id.
   const p = engineData && engineData.engines.find(e => e.id === id);
-  return p && p.label ? p.label : id;
+  if (p) return p.label ? p.label : id;
+  return ENGINE_NAMES[id] || id;
 }
 function kindText(v) {
   if (v.kind === "openai-compatible") {
@@ -948,7 +968,7 @@ async function testEngine(id, btn) {
 
 async function removeEngine(v) {
   const name = v.label || v.id;
-  const keyNote = v.key_ref === "credman" && v.key_present ? " Its saved key is deleted too." : "";
+  const keyNote = (v.key_ref === "credman" || v.key_ref === "keychain") && v.key_present ? " Its saved key is deleted too." : "";
   if (!confirm("Remove " + name + "?" + keyNote)) return;
   try {
     const r = await call("engine_remove", {engine: v.id});
@@ -1516,7 +1536,8 @@ function openForm(v) {
   $("ef-url").value = ex.url || "";
   $("ef-model").value = "";
   $("ef-key").value = "";
-  const ref = v ? (v.key_ref || "credman") : keyDefault("openai-compatible", "openai");
+  // "keychain" (macOS) is the same saved key as "credman", which the form sends.
+  const ref = v ? (v.key_ref === "keychain" ? "credman" : v.key_ref || "credman") : keyDefault("openai-compatible", "openai");
   $("ef-keyref").value = ref.startsWith("env:") ? "env" : ref;
   $("ef-keyenv").value = ref.startsWith("env:") ? ref.slice(4) : "";
   $("ef-timeout").value = optionText(opts.timeout_ms);
@@ -1792,9 +1813,9 @@ addEventListener("beforeunload", e => {
 
 // ---- the engine picker on the Speech page ---------------------------------
 // One plain list: the built-in engines first, then the user's own, then "Add new engine...".
-const PICKER_NAMES = {kokoro: "Kokoro", onecore: "Windows voices"};
+const PICKER_NAMES = {kokoro: "Kokoro", onecore: "Windows voices", macos: "macOS voices"};
 const ADD_ENGINE = "__add";
-function pickerName(id) { return PICKER_NAMES[id] || engineName(id); }
+function pickerName(id) { return (!isProfile(id) && PICKER_NAMES[id]) || engineName(id); }
 function isProfile(id) { return !!(engineData && engineData.engines.some(e => e.id === id)); }
 
 function renderEnginePicker(enginesOn) {

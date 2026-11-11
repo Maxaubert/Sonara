@@ -13,7 +13,7 @@ from __future__ import annotations
 from .client import Client, Subscription
 from .connect import connect
 from .discovery import read_runtime, resolve_home
-from .engines import SEND_MODES, Engines
+from .engines import KEY_STORES, SEND_MODES, Engines, is_stored_key
 from .errors import SonaraError
 from .extensions import Agent, Channels, System
 from .version import PROTOCOL, __version__
@@ -23,6 +23,7 @@ __all__ = [
     "Channels",
     "Client",
     "Engines",
+    "KEY_STORES",
     "PROTOCOL",
     "SEND_MODES",
     "SonaraError",
@@ -30,6 +31,7 @@ __all__ = [
     "System",
     "__version__",
     "connect",
+    "is_stored_key",
     "read_runtime",
     "resolve_home",
 ]

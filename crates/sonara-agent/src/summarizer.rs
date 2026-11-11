@@ -5,15 +5,18 @@
 //! rules then speak the raw text.
 //!
 //! - The command is found on `PATH` only (absolute entries, with `PATHEXT`
-//!   for a bare name such as an npm `.cmd` shim), never in the current
-//!   folder (#138, audit H1).
+//!   for a bare name such as an npm `.cmd` shim on Windows; on unix the
+//!   file of that name with an execute bit), never in the current folder
+//!   (#138, audit H1).
 //! - The prompt goes on stdin, the child runs in the user's home folder
-//!   (claude) or a new empty folder (codex, #59), so no project
-//!   instructions are picked up, with `SONARA_SUMMARIZER=1` (the
-//!   hook adapter sends nothing from inside it) and no console window.
+//!   (claude; `USERPROFILE`, on unix `HOME`) or a new empty folder (codex,
+//!   #59), so no project instructions are picked up, with
+//!   `SONARA_SUMMARIZER=1` (the hook adapter sends nothing from inside it)
+//!   and no console window.
 //! - On timeout the whole process tree is killed (an npm shim runs
 //!   `cmd.exe` then `node`, and killing `cmd.exe` alone leaves `node`
-//!   holding the pipes, #138 audit F5) and the pipes are abandoned.
+//!   holding the pipes, #138 audit F5; on unix the child's own process
+//!   group) and the pipes are abandoned.
 use crate::settings::{Style, SummaryCommand, SummarySettings};
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -127,6 +130,7 @@ pub fn args(command: SummaryCommand, model: &str) -> Vec<String> {
 
 /// The file names a bare command may have (`PATHEXT`); a name that already
 /// has one of the extensions is kept.
+#[cfg(windows)]
 fn command_names(name: &str, pathext: &str) -> Vec<String> {
     let exts: Vec<&str> = pathext.split(';').filter(|e| !e.is_empty()).collect();
     let lower = name.to_lowercase();
@@ -136,12 +140,30 @@ fn command_names(name: &str, pathext: &str) -> Vec<String> {
     exts.iter().map(|e| format!("{name}{e}")).collect()
 }
 
+/// Unix has no `PATHEXT`: the command is the file of that name.
+#[cfg(not(windows))]
+fn command_names(name: &str, _pathext: &str) -> Vec<String> {
+    vec![name.to_string()]
+}
+
+/// A file that can be started: on unix one with an execute bit (a shell
+/// passes over a plain file of that name too).
+fn is_program(f: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(f).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    f.is_file()
+}
+
 /// Find `name` on `path` (absolute entries only). A name with a folder part
 /// is taken as given.
 pub fn resolve(name: &str, path: &OsString, pathext: &str) -> Option<PathBuf> {
     let p = Path::new(name);
     if p.parent().is_some_and(|d| !d.as_os_str().is_empty()) {
-        return p.is_file().then(|| p.to_path_buf());
+        return is_program(p).then(|| p.to_path_buf());
     }
     for dir in std::env::split_paths(path) {
         let dir = PathBuf::from(dir.to_string_lossy().trim_matches('"'));
@@ -150,12 +172,20 @@ pub fn resolve(name: &str, path: &OsString, pathext: &str) -> Option<PathBuf> {
         }
         for n in command_names(name, pathext) {
             let f = dir.join(n);
-            if f.is_file() {
+            if is_program(&f) {
                 return Some(f);
             }
         }
     }
     None
+}
+
+/// The user's home folder: `USERPROFILE` on Windows, `HOME` on unix.
+fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Read the answer: the "SKIP" sentinel (the model's "nothing to say") and
@@ -213,6 +243,15 @@ fn kill_tree(child: &mut Child) {
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
+        }
+    }
+    // Unix: the child leads its own group (`process_group(0)` at spawn).
+    #[cfg(unix)]
+    if let Ok(pgid) = libc::pid_t::try_from(child.id()) {
+        // SAFETY: a plain syscall on the group the child leads; a group
+        // already gone fails with ESRCH and changes nothing.
+        unsafe {
+            libc::killpg(pgid, libc::SIGKILL);
         }
     }
     let _ = child.kill();
@@ -276,7 +315,7 @@ impl ProcessSummarizer {
             .cwd
             .clone()
             .or_else(|| empty.as_ref().map(|e| e.0.clone()))
-            .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from));
+            .or_else(home_dir);
         let mut cmd = Command::new(&exe);
         cmd.args(args(settings.command, &settings.model))
             .env("SONARA_SUMMARIZER", "1")
@@ -287,6 +326,12 @@ impl ProcessSummarizer {
             cmd.current_dir(dir);
         }
         hide_window(&mut cmd);
+        // Unix: a process group of its own, which `kill_tree` ends as one.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("summarizer spawn failed: {e}"))?;
@@ -394,6 +439,7 @@ mod tests {
         assert!(parse_output(" \n").is_err());
     }
 
+    #[cfg(windows)]
     #[test]
     fn pathext_names() {
         assert_eq!(
@@ -403,6 +449,7 @@ mod tests {
         assert_eq!(command_names("codex.cmd", ".EXE;.CMD"), ["codex.cmd"]);
     }
 
+    #[cfg(windows)]
     #[test]
     fn resolve_searches_absolute_path_entries_only() {
         let dir = std::env::temp_dir().join(format!("sonara-agent-resolve-{}", std::process::id()));
@@ -419,5 +466,35 @@ mod tests {
         assert_eq!(resolve("claude", &relative, ".CMD"), None);
         assert_eq!(resolve("nothere", &path, ".EXE;.CMD"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Unix: a bare `claude` is the file `claude` on PATH (no `PATHEXT`
+    /// names, which made the summarizer never find it), and only one with
+    /// an execute bit: a plain file of that name earlier on PATH is passed
+    /// over, as a shell would.
+    #[cfg(unix)]
+    #[test]
+    fn a_bare_name_is_the_executable_file_of_that_name_on_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("sonara-agent-unix-{}", std::process::id()));
+        let (plain, bin) = (root.join("plain"), root.join("bin"));
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        for (dir, mode) in [(&plain, 0o644), (&bin, 0o755)] {
+            let f = dir.join("claude");
+            std::fs::write(&f, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let path = std::env::join_paths([PathBuf::from("."), plain.clone(), bin.clone()]).unwrap();
+        // The default PATHEXT the summarizer falls back to when unset.
+        assert_eq!(
+            resolve("claude", &path, ".COM;.EXE;.BAT;.CMD"),
+            Some(bin.join("claude"))
+        );
+        let only_plain = std::env::join_paths([plain.clone()]).unwrap();
+        assert_eq!(resolve("claude", &only_plain, ""), None);
+        let relative = std::env::join_paths([PathBuf::from(".")]).unwrap();
+        assert_eq!(resolve("claude", &relative, ""), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

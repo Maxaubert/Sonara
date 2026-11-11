@@ -1,6 +1,7 @@
 //! A real Windows Credential Manager round trip (opt-in): `cargo test -p
 //! sonara-engine --test credman_live -- --ignored`. It writes, reads, lists
 //! and deletes `sonara:test-<pid>` only.
+#![cfg(windows)]
 use sonara_engine::external::keys::{CredentialStore, KeyStore, Secret};
 
 #[test]

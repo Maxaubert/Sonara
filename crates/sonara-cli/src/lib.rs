@@ -9,7 +9,7 @@
 //!   (`hello` with `agent`, `system` and `keep_alive`, like the hook). A
 //!   runtime of an older release (an upgrade) is shut down and replaced, a
 //!   newer one is kept (upgrades go one way), and folders of older releases
-//!   in `%LOCALAPPDATA%\Sonara\runtime\` are removed.
+//!   in `<default home>/runtime/` are removed.
 //! - `stop`: write the stop sentinel (the hooks then never start the
 //!   runtime) and ask the runtime to exit (`shutdown`, extension `system`),
 //!   which restores other apps first.
@@ -18,14 +18,15 @@
 //! - `doctor`: one row per check; informational rows never fail.
 //! - `uninstall [--keep LIST]`: stop, remove the runtime folder and the
 //!   home except what the user keeps (and, unless settings are kept, the
-//!   external engine keys in Credential Manager), and leave the stop
+//!   external engine keys in Credential Manager or the Keychain), and leave the stop
 //!   sentinel so the plugin's hooks stay quiet until `/sonara:start`.
 //! - `engines ...`: the external engine profiles (`engines`); a `command`
 //!   engine (a program on this PC) is written into `engines.json` here,
 //!   never sent over the protocol (`engines_file`).
 //!
-//! Paths: the home is `SONARA_HOME`, else `%LOCALAPPDATA%\Sonara` (as
-//! `sonarad`); the runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
+//! Paths: the home is `SONARA_HOME`, else the default home (as `sonarad`:
+//! `%LOCALAPPDATA%\Sonara` on Windows, `~/Library/Application Support/Sonara`
+//! on macOS); the runtime folders are `<default home>/runtime/<version>/`.
 pub mod client;
 pub mod doctor;
 pub mod engines;

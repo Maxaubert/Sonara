@@ -11,15 +11,19 @@ safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
 |---|---|
 | OneCore voices | `cargo test -p sonara-engine --test onecore_live -- --ignored` |
 | L4 audio, media and hotkeys | `cargo test -p sonara-system --test win_live -- --ignored` |
+| Output follows a new default device (switch or unplug devices while it plays, Windows and macOS) | `cargo test -p sonara-audio --test device_follow_live -- --ignored --nocapture` |
 | Credential Manager round trip | `cargo test -p sonara-engine --test credman_live -- --ignored` |
+| macOS voices (`say`; writes WAVs, plays nothing) | `cargo test -p sonara-engine --test macos_say_live -- --ignored --nocapture` |
+| Keychain round trip (macOS; writes `sonara` / `test-<pid>` in the login Keychain, never shows a dialog) | `cargo test -p sonara-engine --test keychain_live -- --ignored` |
 | End to end, one sentence | `cargo run -p sonara-reader --example say -- --engine onecore\|fake "Hello."` |
 
 ## External engines (#224, #225, #226, #235)
 
 - Conformance and SDK tests run `sonarad --keys fake`: keys live in `<home>\fake-keys.json`,
-  never in Credential Manager.
+  never in Credential Manager or the Keychain.
 - The `command` kind's tests run `crates/sonara-engine/src/bin/sonara-fake-tts.rs`
-  (feature `test-util`).
+  (feature `test-util`). On unix the tests also run `#!/bin/sh` scripts made in a temp folder
+  (a script is a program there; one without its execute bit is refused).
 - Live checks (opt-in, each skips when its variables are unset):
   `cargo test -p sonara-engine --test external_live -- --ignored --nocapture`
 
@@ -68,6 +72,14 @@ The command does not rebuild everything: re-apply the edits a `SOURCES.md` lists
   back to OneCore. The CRT is linked statically (`.cargo/config.toml`).
 - Live check:
   `SONARA_KOKORO_MODELS=<folder with the two model files> cargo test -p sonara-engine --release --test kokoro_live -- --ignored --nocapture`
+- macOS: `python packaging/runtime_dlls.py stage target/<debug|release>` stages
+  `libonnxruntime.dylib` (the pinned `osx-arm64` build, no VC++ step) instead; `--platform`
+  picks another platform's asset. The same live check runs there. Measured 2026-11-11 on Apple
+  Silicon (release build, CPU provider, other builds running alongside): load 1.9 s, first call
+  0.35 s, corpus RTF 0.30, peak memory 777 MB.
+- macOS `say` engine rate: Sonara's 200 maps to `say -r 175`, `say`'s own speed (the live test
+  `macos_say_rate_matches_sonara_words_per_minute` checks it; measured equal, 9.23 s both).
+  Each sentence costs about 0.6 s of `say` start-up.
 - G2P golden changes: `SONARA_BLESS=1 cargo test -p sonara-engine --test kokoro_g2p`, then
   review the diff.
 - Vendored G2P data: `crates/misaki/tools/pack_data.py`.

@@ -36,7 +36,7 @@ Good to know:
 
 | Label | Key | Default | Range or choices | Effect |
 |---|---|---|---|---|
-| Engine | `engine` | Kokoro (see note) | `kokoro`, `onecore` (Windows voices), or the id of an engine you added | The voice engine that reads. Not stored until you pick one |
+| Engine | `engine` | Kokoro (see note) | `kokoro`, `onecore` (Windows voices), `macos` (macOS voices, on a Mac), or the id of an engine you added | The voice engine that reads. Not stored until you pick one |
 | Voice | `voice` | `af_sarah` | Any voice the engine lists, or none (the engine's own voice) | The voice. A preview button speaks a sample. If the engine lacks a saved voice, the saved choice waits in `config.json` and applies once it is available |
 | Rate | `rate` | 250 | 100 to 400 words per minute, step 5 | Speaking speed |
 | Mute | `mute_level` | 0 | 0 Unmuted, 1 Muted, 2 Super muted | Muted: text is not spoken, chimes still play. Super muted: chimes are silent too. Set by the Ctrl+Alt+M hotkey as well |
@@ -81,7 +81,7 @@ Each finished reply costs one small call on your Claude or Codex login. See [sum
 | Label | Key | Default | Range or choices | Effect |
 |---|---|---|---|---|
 | Volume | `volume` | 100 | 0 to 100 percent, step 5 | Sonara's own volume. Chimes follow it |
-| Other apps | `audio_mode` | `pause` | `off` (Off), `duck` (Duck), `pause` (Pause) | What other apps do while Sonara speaks. Pause pauses media that Windows can control and resumes it. Duck lowers other apps. Off leaves them alone. They come back when Sonara stops, and on the next start if it was killed mid-sentence |
+| Other apps | `audio_mode` | `pause` | `off` (Off), `duck` (Duck), `pause` (Pause) | What other apps do while Sonara speaks. Pause pauses media that Windows can control and resumes it. Duck lowers other apps. Off leaves them alone. They come back when Sonara stops, and on the next start if it was killed mid-sentence. On macOS Duck is greyed out (macOS has no per-app volume; a saved `duck` pauses instead), and Pause reaches Music and Spotify only: macOS asks once per app whether Sonara may control it |
 | Duck to | `duck_level` | 30 | 0 to 100 percent | The volume other apps keep while ducked. Shown only for Duck |
 
 ### Chimes and where files live

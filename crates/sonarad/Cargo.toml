@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 # `test-util` brings the fake engine and is only used with `--engine fake`
 # (documented as a testing aid in docs/protocol-v1.md).
-sonara-reader = { workspace = true, features = ["onecore", "test-util"] }
+sonara-reader = { workspace = true, features = ["onecore", "macos-say", "test-util"] }
 sonara-engine = { workspace = true, features = ["test-util", "kokoro", "external"] }
 sonara-audio.workspace = true
 sonara-core.workspace = true
@@ -38,6 +38,11 @@ windows = { workspace = true, features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
+
+# The instance lock (flock), the uid and the token's random bytes on macOS.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+getrandom = "0.2"
 
 [dev-dependencies]
 sonara-audio = { workspace = true, features = ["test-util"] }

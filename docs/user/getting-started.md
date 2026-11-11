@@ -108,7 +108,7 @@ Your settings stay. `/sonara:doctor` shows the running version in its `version` 
 
 | Keep word | What stays |
 |---|---|
-| `settings` | `config.json`, `keymap.json`, `session_prefs.json`, `engines.json`, the `earcons\` folder of your own chimes, and the added engines' keys in Windows Credential Manager |
+| `settings` | `config.json`, `keymap.json`, `session_prefs.json`, `engines.json`, the `earcons\` folder of your own chimes, and the added engines' keys in Windows Credential Manager (on macOS the Keychain) |
 | `models` | `models\`, the Kokoro voice model (about 350 MB) |
 | `logs` | `logs\` |
 | `none` | Nothing is kept |

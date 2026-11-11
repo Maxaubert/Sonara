@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from conftest import kill, read_json, wait_until
 
-from sonara_client import Engines, SonaraError, connect
+from sonara_client import KEY_STORES, Engines, SonaraError, connect, is_stored_key
 from sonara_client.discovery import pid_alive
 
 SECRET = "sk-py-client-secret-0123456789"
@@ -20,6 +20,14 @@ SECRET = "sk-py-client-secret-0123456789"
 
 def _sent(fake, skip=1):
     return [{k: v for k, v in r.items() if k != "id"} for r in fake.requests()[skip:]]
+
+
+def test_both_names_of_the_os_key_store_are_stored_keys():
+    assert KEY_STORES == ("credman", "keychain")
+    for ref in ("credman", "keychain"):
+        assert is_stored_key(ref), ref
+    for ref in ("none", "env:OPENAI_API_KEY", "", None):
+        assert not is_stored_key(ref), ref
 
 
 def test_engine_messages_have_the_wire_shape(home, fake):

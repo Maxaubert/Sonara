@@ -13,14 +13,28 @@ from __future__ import annotations
 
 import http.client
 import json
+import sys
 import time
 import urllib.parse
 
 from harness import TIMEOUT, long_text, wait_until
 
 LONG = long_text(3)
+
+
+def combo(windows: str) -> str:
+    """A chord as the runtime writes it on this OS: macOS says Option for
+    Alt and Cmd for Win, in its menu order (Ctrl, Option, Shift, Cmd)."""
+    if sys.platform != "darwin":
+        return windows
+    *mods, key = windows.split("+")
+    names = {"Ctrl": "Ctrl", "Alt": "Option", "Shift": "Shift", "Win": "Cmd"}
+    return "+".join([names[m] for m in ("Ctrl", "Alt", "Shift", "Win") if m in mods] + [key])
+
+
 # #309: Up and Down move one section; Left and Right ship unbound.
-DEFAULT_COMBOS = {"restart": "Ctrl+Alt+Up", "flush": "Ctrl+Alt+Down", "mute": "Ctrl+Alt+M", "next_channel": "Ctrl+Alt+P"}
+DEFAULT_COMBOS = {"restart": combo("Ctrl+Alt+Up"), "flush": combo("Ctrl+Alt+Down"),
+                  "mute": combo("Ctrl+Alt+M"), "next_channel": combo("Ctrl+Alt+P")}
 
 
 def write_world(path, world):
@@ -243,9 +257,9 @@ def test_hotkeys_are_registered_only_while_a_client_needs_them(rt):
     c = system_client(rt)
     v = hotkeys(c)
     assert v["active"] is True
-    for action, combo in DEFAULT_COMBOS.items():
+    for action, label in DEFAULT_COMBOS.items():
         b = binding(v, action)
-        assert b["combo"] == combo and b["registered"] is True, b
+        assert b["combo"] == label and b["registered"] is True, b
     for action in ("previous_question", "next_question", "pause"):
         assert binding(v, action)["key"] is None, "Left, Right, pause, faster and slower ship unbound"
     assert len(read_world(rt.fake_system)["hotkeys"]) == 4
@@ -267,7 +281,7 @@ def test_keep_alive_holds_the_hotkeys_after_the_client_left(rt):
 def test_bind_unbind_reset_and_the_keymap_file(rt):
     c = system_client(rt)
     v = set_key(c, "hotkeys", {"action": "mute", "key": "k", "mods": ["win", "alt"]})
-    assert binding(v, "mute")["combo"] == "Win+Alt+K" and binding(v, "mute")["registered"] is True
+    assert binding(v, "mute")["combo"] == combo("Win+Alt+K") and binding(v, "mute")["registered"] is True
     on_disk = json.loads((rt.home / "keymap.json").read_text(encoding="utf-8"))
     assert on_disk["mute"] == {"key": "k", "mods": ["win", "alt"]}
     registered = read_world(rt.fake_system)["hotkeys"]
@@ -275,8 +289,8 @@ def test_bind_unbind_reset_and_the_keymap_file(rt):
     v = set_key(c, "hotkeys", {"action": "flush", "key": None})
     assert binding(v, "flush")["key"] is None
     v = set_key(c, "hotkeys", "reset")
-    for action, combo in DEFAULT_COMBOS.items():
-        assert binding(v, action)["combo"] == combo
+    for action, label in DEFAULT_COMBOS.items():
+        assert binding(v, action)["combo"] == label
 
 
 def test_bad_hotkeys_are_refused_before_anything_is_written(rt):

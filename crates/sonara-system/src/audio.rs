@@ -179,6 +179,7 @@ impl AudioControl {
         let (tx, rx) = mpsc::channel();
         let audio = platform.audio.clone();
         let media = platform.media.clone();
+        let can_duck = platform.duck;
         let st = status.clone();
         let shutdown_wait = config.shutdown_wait;
         let log = config.log.clone();
@@ -191,6 +192,7 @@ impl AudioControl {
                     pauser: MediaPauser::new(media(), config.state_dir.join(PAUSE_STATE))
                         .with_log(config.log.clone()),
                     exclude: config.exclude_pids,
+                    can_duck,
                     grace: config.idle_grace,
                     status: st,
                     idle_since: None,
@@ -343,6 +345,9 @@ struct Worker {
     ducker: Ducker,
     pauser: MediaPauser,
     exclude: Vec<u32>,
+    /// `Platform::duck`: where ducking is unavailable (macOS), `duck` mode
+    /// pauses media instead.
+    can_duck: bool,
     grace: Duration,
     status: Arc<Mutex<Status>>,
     /// When the reader went idle while engaged (the grace runs from here).
@@ -431,7 +436,11 @@ impl Worker {
         let want = s.armed && s.activity == Activity::Speaking && s.mode != AudioMode::Off;
         if want {
             self.idle_since = None;
-            match s.mode {
+            let mode = match s.mode {
+                AudioMode::Duck if !self.can_duck => AudioMode::Pause,
+                m => m,
+            };
+            match mode {
                 AudioMode::Duck => {
                     if self.pauser.is_paused() {
                         self.resume("mode duck");

@@ -6,7 +6,8 @@
 //! finds the entry unusable gets the previous file back.
 //!
 //! The checks here are the ones a typo needs at once (the program is the
-//! full path of an `.exe` that exists, the text is never an argument);
+//! full path of an `.exe` that exists, on unix of an executable file; the
+//! text is never an argument);
 //! sonarad validates the whole profile on reload.
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -33,34 +34,64 @@ impl Written {
     }
 }
 
-/// The program of a `command` profile: an absolute path to an `.exe` that
-/// exists; `{text}` nowhere in argv.
+/// A `command` program as the messages name it, and an example.
+#[cfg(windows)]
+const PROGRAM: &str = "an .exe";
+#[cfg(windows)]
+const EXAMPLE: &str = "C:\\Tools\\tts.exe";
+#[cfg(windows)]
+const ARGV_NEEDED: &str =
+    "a command engine needs --option 'argv=[\"C:/path/to/program.exe\", ...]' \
+     (a JSON list: the program's full path, then its arguments)";
+#[cfg(not(windows))]
+const PROGRAM: &str = "an executable file";
+#[cfg(not(windows))]
+const EXAMPLE: &str = "/usr/local/bin/piper";
+#[cfg(not(windows))]
+const ARGV_NEEDED: &str = "a command engine needs --option 'argv=[\"/path/to/program\", ...]' \
+     (a JSON list: the program's full path, then its arguments)";
+
+/// The program of a `command` profile: an absolute path to an `.exe` (on
+/// unix an executable file, a `#!` script too) that exists; `{text}`
+/// nowhere in argv.
 pub fn check_command(profile: &Value) -> Result<(), String> {
     let argv = profile["options"]["argv"]
         .as_array()
         .filter(|a| !a.is_empty())
-        .ok_or(
-            "a command engine needs --option 'argv=[\"C:/path/to/program.exe\", ...]' \
-             (a JSON list: the program's full path, then its arguments)",
-        )?;
+        .ok_or(ARGV_NEEDED)?;
     let mut args = Vec::with_capacity(argv.len());
     for a in argv {
         args.push(a.as_str().ok_or("argv must be a list of texts")?);
     }
     let program = Path::new(args[0]);
-    let exe = program
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
-    if !program.is_absolute() || !exe {
+    // Windows: only an .exe (a .bat or .cmd runs through cmd.exe). Unix:
+    // any executable file (execve reads no shell syntax in the arguments).
+    let kind_ok = !cfg!(windows)
+        || program
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+    if !program.is_absolute() || !kind_ok {
         return Err(format!(
-            "argv[0] '{}' must be the full path of an .exe, such as C:\\Tools\\tts.exe",
+            "argv[0] '{}' must be the full path of {PROGRAM}, such as {EXAMPLE}",
             args[0]
         ));
     }
-    if !program.is_file() {
-        return Err(format!("the program '{}' does not exist", args[0]));
+    let meta = match std::fs::metadata(program) {
+        Ok(m) if m.is_file() => m,
+        _ => return Err(format!("the program '{}' does not exist", args[0])),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o111 == 0 {
+            return Err(format!(
+                "the program '{}' is not executable (chmod +x it)",
+                args[0]
+            ));
+        }
     }
+    let _ = meta;
     if args.iter().any(|a| a.contains("{text}")) {
         return Err(
             "{text} is not allowed in argv: the program reads the text on stdin \
@@ -241,15 +272,32 @@ mod tests {
     fn the_checks_a_typo_needs() {
         let h = home("checks");
         let missing = h.join("no-such-tts.exe").display().to_string();
+        let full_path = format!("full path of {PROGRAM}");
         for (argv, msg) in [
-            (json!(["tts.exe"]), "full path of an .exe"),
-            (json!(["C:\\Tools\\say.bat"]), "full path of an .exe"),
+            (json!(["tts.exe"]), full_path.as_str()),
+            (json!(["C:\\Tools\\say.bat"]), full_path.as_str()),
             (json!([missing]), "does not exist"),
             (json!([exe(), "--say", "{text}"]), "{text} is not allowed"),
             (json!([]), "needs --option"),
         ] {
             let e = write(&h, &piper("x", argv.clone()), false).unwrap_err();
             assert!(e.contains(msg), "{argv}: {e}");
+        }
+        // Unix: a file without its execute bit is no program; a `#!`
+        // script with one is.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = h.join("say.sh");
+            std::fs::write(&script, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let path = script.display().to_string();
+            assert_eq!(
+                check_command(&piper("x", json!([path]))).unwrap_err(),
+                format!("the program '{path}' is not executable (chmod +x it)")
+            );
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(check_command(&piper("x", json!([path]))).is_ok());
         }
         assert!(!h.join(FILE).exists(), "nothing written");
         std::fs::write(h.join(FILE), "{not json").unwrap();

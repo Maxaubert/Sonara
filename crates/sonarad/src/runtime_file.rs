@@ -45,7 +45,21 @@ pub fn write(
 ) -> Result<(), String> {
     let tmp = temp_path(path, info.pid);
     let result = (|| {
-        let mut f = std::fs::File::create(&tmp)
+        let mut open = std::fs::OpenOptions::new();
+        open.write(true).create(true).truncate(true);
+        // On unix the file is user-only (0600) from the moment it exists,
+        // and always a new file: a leftover temp file (or a link planted in
+        // its place) is removed, and a link is never followed.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::remove_file(&tmp);
+            open.create_new(true)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW);
+        }
+        let mut f = open
+            .open(&tmp)
             .map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
         // Restrict before the token is written.
         restrict(&tmp)?;
@@ -152,6 +166,19 @@ mod tests {
         assert_eq!(rfc3339(leap), "2000-02-29T00:00:00Z");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_link_planted_at_the_temp_path_is_never_written_through() {
+        let dir = temp_dir("link");
+        let path = dir.join("runtime.json");
+        let target = dir.join("elsewhere");
+        std::fs::write(&target, "untouched").unwrap();
+        std::os::unix::fs::symlink(&target, temp_path(&path, 7)).unwrap();
+        write(&path, &info(7), |_| Ok(())).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
+        assert_eq!(read_pid(&path), Some(7));
+    }
+
     #[test]
     fn write_replaces_atomically_and_remove_checks_the_pid() {
         let dir = temp_dir("write");
@@ -191,6 +218,25 @@ mod tests {
         let (aces, protected) = crate::instance::dacl_summary(&path).unwrap();
         assert_eq!(aces, 1, "one entry: the user");
         assert!(protected, "no inherited entries");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_file_is_user_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("mode");
+        let path = dir.join("runtime.json");
+        let uid = crate::instance::user_sid().unwrap();
+        // Already user-only before `restrict` runs and the token is written.
+        write(&path, &info(1), |p| {
+            let mode = std::fs::metadata(p).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "the temp file: {mode:o}");
+            crate::instance::restrict_to_user(p, &uid)
+        })
+        .unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

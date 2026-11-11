@@ -17,7 +17,8 @@
 //!   (security review of PR3). Removing, testing and selecting one stay
 //!   allowed.
 //! - Never a key in the file, a log line or a reply: secrets go only to the
-//!   `KeyStore` (Credential Manager, or `fake-keys.json` with `--keys fake`).
+//!   `KeyStore` (Credential Manager or the Keychain, or `fake-keys.json` with
+//!   `--keys fake`).
 //! - Keys are bound to the origin they were entered for (spec 6.4): a stored
 //!   key goes with its origin, `engine_add` deletes one whose origin is not
 //!   the profile's new one (unless a new secret comes with it), and an
@@ -34,6 +35,7 @@ use sonara_engine::external::hold::Hold;
 use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
     implemented_kinds, origin_of, KeyRef, Kind, Preset, Profile, ProfileError, MAX_PROFILES,
+    OS_KEY_REF,
 };
 use sonara_engine::external::{External, ExternalConfig, Notice};
 use sonara_engine::{Engine, Reason, Registry, Voice};

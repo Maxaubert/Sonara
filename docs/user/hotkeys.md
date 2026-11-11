@@ -15,6 +15,14 @@ The default chord is **Ctrl+Alt**. Four actions are bound; the rest ship unbound
 
 A **section** is a sentence, a table row, a code line or a question.
 
+### On macOS
+
+The defaults are the same keys with **Ctrl+Option** (Option is the Alt key), for example Ctrl+Option+Up. The settings page and doctor write Alt as Option and Win as Cmd.
+
+- **VoiceOver** uses Ctrl+Option as its modifier. If you use VoiceOver, rebind the four hotkeys with Cmd (for example Ctrl+Option+Cmd+Up); the settings page and doctor remind you while a Ctrl+Option hotkey is bound.
+- **Mission Control and Spaces** use Ctrl+arrows. If an arrow hotkey shows as taken, change that shortcut in System Settings, Keyboard, Keyboard Shortcuts, or rebind with Cmd.
+- The hotkeys need no permission: they are registered with the system (not by reading the keyboard), so macOS asks for no Accessibility or Input Monitoring access.
+
 ## Tap versus hold
 
 | | |

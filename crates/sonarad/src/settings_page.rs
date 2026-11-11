@@ -39,6 +39,38 @@ pub const FONTS_SLOT: &str = "/*__SONARA_FONTS__*/";
 /// sliders' and the stepper's ranges and defaults come from `SCHEMA` (#257).
 pub const SCHEMA_SLOT: &str = "/*__SONARA_SCHEMA__*/{}";
 
+/// The placeholder in the page script `PagePlatform` replaces (with its
+/// default, the Windows one, in place).
+pub const PLATFORM_SLOT: &str = "/*__SONARA_PLATFORM__*/{\"os\": \"windows\", \"duck\": true}";
+
+/// What the page shows per platform: the modifier names (macOS: Option
+/// and Cmd) and whether the duck option exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PagePlatform {
+    /// `windows` or `macos`.
+    pub os: &'static str,
+    /// `sonara_system::Platform::duck`.
+    pub duck: bool,
+}
+
+impl PagePlatform {
+    /// This build's OS, with `duck` from the system platform in use.
+    pub fn this_os(duck: bool) -> PagePlatform {
+        PagePlatform {
+            os: if cfg!(target_os = "macos") {
+                "macos"
+            } else {
+                "windows"
+            },
+            duck,
+        }
+    }
+
+    fn json(&self) -> String {
+        serde_json::json!({"os": self.os, "duck": self.duck}).to_string()
+    }
+}
+
 /// The fonts: (family, woff2 bytes). Latin subsets of the variable fonts
 /// (weights 100 to 900); other scripts fall back to the system font.
 const FONTS: &[(&str, &[u8])] = &[
@@ -150,12 +182,23 @@ pub fn refusal(
 }
 
 /// The page for a request with this `Host` header and query, or the HTTP
-/// status and message to answer instead.
+/// status and message to answer instead (this OS, with ducking).
 pub fn render(
     host: Option<&str>,
     query: Option<&str>,
     port: u16,
     token: &str,
+) -> Result<String, (u16, &'static str)> {
+    render_for(host, query, port, token, PagePlatform::this_os(true))
+}
+
+/// `render` for `platform`.
+pub fn render_for(
+    host: Option<&str>,
+    query: Option<&str>,
+    port: u16,
+    token: &str,
+    platform: PagePlatform,
 ) -> Result<String, (u16, &'static str)> {
     let allowed = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     let host_ok = host.is_some_and(|h| allowed.iter().any(|a| a.eq_ignore_ascii_case(h)));
@@ -168,7 +211,13 @@ pub fn render(
     }
     // The token is hex, so it needs no escaping inside a JS string.
     debug_assert!(token.chars().all(|c| c.is_ascii_alphanumeric()));
-    Ok(page_with_fonts().replacen(TOKEN_SLOT, &format!("\"{token}\""), 1))
+    Ok(page_with_fonts()
+        .replacen(TOKEN_SLOT, &format!("\"{token}\""), 1)
+        .replacen(
+            PLATFORM_SLOT,
+            &format!("/*__SONARA_PLATFORM__*/{}", platform.json()),
+            1,
+        ))
 }
 
 #[cfg(test)]
@@ -284,6 +333,26 @@ mod tests {
                 assert!(!input.contains(attr), "{input}");
             }
         }
+    }
+
+    #[test]
+    fn the_page_names_its_platform_and_whether_it_can_duck() {
+        assert_eq!(PAGE.matches(PLATFORM_SLOT).count(), 1);
+        let mac = PagePlatform {
+            os: "macos",
+            duck: false,
+        };
+        let page = render_for(Some("127.0.0.1:5000"), Some("token=t1"), 5000, "t1", mac).unwrap();
+        assert!(!page.contains(PLATFORM_SLOT));
+        assert!(page
+            .contains(r#"const PLATFORM = /*__SONARA_PLATFORM__*/{"duck":false,"os":"macos"};"#));
+        let page = render(Some("127.0.0.1:5000"), Some("token=t1"), 5000, "t1").unwrap();
+        let os = if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "windows"
+        };
+        assert!(page.contains(&format!(r#"{{"duck":true,"os":"{os}"}};"#)));
     }
 
     #[test]
