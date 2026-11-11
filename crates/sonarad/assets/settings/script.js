@@ -948,7 +948,7 @@ async function testEngine(id, btn) {
 
 async function removeEngine(v) {
   const name = v.label || v.id;
-  const keyNote = v.key_ref === "credman" && v.key_present ? " Its saved key is deleted too." : "";
+  const keyNote = (v.key_ref === "credman" || v.key_ref === "keychain") && v.key_present ? " Its saved key is deleted too." : "";
   if (!confirm("Remove " + name + "?" + keyNote)) return;
   try {
     const r = await call("engine_remove", {engine: v.id});
@@ -1516,7 +1516,8 @@ function openForm(v) {
   $("ef-url").value = ex.url || "";
   $("ef-model").value = "";
   $("ef-key").value = "";
-  const ref = v ? (v.key_ref || "credman") : keyDefault("openai-compatible", "openai");
+  // "keychain" (macOS) is the same saved key as "credman", which the form sends.
+  const ref = v ? (v.key_ref === "keychain" ? "credman" : v.key_ref || "credman") : keyDefault("openai-compatible", "openai");
   $("ef-keyref").value = ref.startsWith("env:") ? "env" : ref;
   $("ef-keyenv").value = ref.startsWith("env:") ? ref.slice(4) : "";
   $("ef-timeout").value = optionText(opts.timeout_ms);

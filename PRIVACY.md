@@ -136,7 +136,8 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
 - **What is not sent.** No other text, file, setting or identifier. Short repeated phrases may be
   answered from memory instead of asked again; that memory is gone when the runtime stops.
 - **Keys.** An engine's API key is stored in **Windows Credential Manager** (a generic
-  credential named `sonara:<engine id>`, for your Windows user on this PC, not roaming), or read
+  credential named `sonara:<engine id>`, for your Windows user on this PC, not roaming) or, on macOS,
+  in your **login Keychain** (a generic password, service `sonara`, account `<engine id>`), or read
   from an environment variable you named. It is never written to a file in
   `%LOCALAPPDATA%\Sonara`, never logged and never sent back to a client. It is sent only in the
   provider's authentication header, over HTTPS (or to a server on your own PC), never in an
@@ -180,7 +181,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 | `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, reading mode, what the flush hotkey skips, summary options and your own summary instructions, the troubleshooting log on or off), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
 | `keymap.json` | Your hotkey bindings |
 | `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed) |
-| `engines.json` | The external speech engines you added: for each its id, kind, label, address, model, voice, where its key comes from (`credman`, `env:NAME` or none), for an `env:` key the address you allow it to go to (`key_origin`), and its options. Never a key. `engines.json.bad` is a copy of a file that could not be read |
+| `engines.json` | The external speech engines you added: for each its id, kind, label, address, model, voice, where its key comes from (`credman`, on macOS `keychain`, `env:NAME` or none), for an `env:` key the address you allow it to go to (`key_origin`), and its options. Never a key. `engines.json.bad` is a copy of a file that could not be read |
 | `earcons\` | Your own chimes, if you put any there: `<kind>.wav` files (for example `session_change.wav`) that Sonara plays instead of its built-in sounds. Created empty at start; Sonara only reads it |
 
 **Runtime state**
@@ -222,12 +223,18 @@ version's own uninstall removes it.
 |---|---|
 | `sonara:<engine id>` (generic credential, user `sonara`) | The API key you gave an external speech engine, for your Windows user on this PC, with the address (`scheme://host:port`) it was entered for: Sonara sends the key only there, and deletes it when the engine is changed to point elsewhere. Removed with the engine, and by `/sonara:uninstall` unless you keep your settings |
 
+**On macOS: the login Keychain** (instead of Credential Manager)
+
+| Entry | What it holds |
+|---|---|
+| Generic password, service `sonara`, account `<engine id>` | The same key and address, kept together as the item's data (JSON `{secret, origin}`), for your macOS user. Removed with the engine, and by `/sonara:uninstall` unless you keep your settings |
+
 Other than those credentials, Sonara writes nothing outside `%LOCALAPPDATA%\Sonara`: the plugin
 itself lives where Claude Code keeps plugins, and there is no autostart task, launcher or
 settings.json change.
 
 **Testing aid.** `sonarad --keys fake` (test runs only) keeps keys in `fake-keys.json` in the home
-instead of Credential Manager. The plugin never starts it that way.
+instead of Credential Manager or the Keychain. The plugin never starts it that way.
 
 ## Downloads
 

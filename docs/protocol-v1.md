@@ -333,7 +333,7 @@ A change of `engine_status` alone (download progress, about four times a second 
 | `E_UNSUPPORTED` | an unmet `require`, an unknown event stream, or a message, action or key of an extension that is not enabled |
 | `E_INCOMPATIBLE` | `hello` with another protocol major |
 | `E_BUSY` | `hello` with `takeover: true` while something is playing or queued; any request but `hello` after a takeover was accepted or the idle exit was decided, over TCP as over HTTP (review finding 46); any request while the runtime is exiting |
-| `E_ENGINE` | the engine or the reader failed; a Credential Manager failure; a failed `engine_test` |
+| `E_ENGINE` | the engine or the reader failed; a Credential Manager or Keychain failure; a failed `engine_test` |
 | `E_NOT_FOUND` | an unknown voice, engine or external engine profile |
 | `E_FORBIDDEN` | protocol 1.3: a request no client may make over the protocol, from any transport or SDK: `engine_add` of a `command` engine, or one that would replace a `command` engine (see [External engines](#external-engines)) |
 
@@ -398,7 +398,9 @@ runtime. The runtime speaks 1.12 (`PROTOCOL_MINOR` in `crates/sonarad/src/protoc
 
 Changes with no minor bump: runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and
 `skip_code` (old values are accepted as aliases) and added `engine_status` to `runtime`; no shipped
-client depended on the old values.
+client depended on the old values. The macOS runtime added the `key_ref` value `"keychain"` (the macOS
+Keychain), taken on every platform as the same OS key store as `"credman"`; a view and
+`engines.json` use the runtime platform's own name ([External engines](protocol-v1-engines.md)).
 
 ## Saved settings
 
@@ -480,7 +482,8 @@ engine spoke (`tests/embed`). It works with every engine.
 with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read
 and written on every operation), so a test can set up the "apps", kill the runtime and check what
 the next one restores. `sonarad --keys fake` keeps external engine keys in `<home>\fake-keys.json`
-instead of Windows Credential Manager (`--keys windows`, the default), so tests never touch the
+instead of the OS key store (`--keys os`, the default: Windows Credential Manager, the macOS
+Keychain; `--keys windows` is an alias), so tests never touch the
 user's credentials. They are meant for tests and the conformance suite, not for apps. With
 `--engine fake` there is no Kokoro engine, so nothing is ever downloaded.
 

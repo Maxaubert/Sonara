@@ -12,14 +12,16 @@ safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
 | OneCore voices | `cargo test -p sonara-engine --test onecore_live -- --ignored` |
 | L4 audio, media and hotkeys | `cargo test -p sonara-system --test win_live -- --ignored` |
 | Credential Manager round trip | `cargo test -p sonara-engine --test credman_live -- --ignored` |
+| Keychain round trip (macOS; writes `sonara` / `test-<pid>` in the login Keychain, never shows a dialog) | `cargo test -p sonara-engine --test keychain_live -- --ignored` |
 | End to end, one sentence | `cargo run -p sonara-reader --example say -- --engine onecore\|fake "Hello."` |
 
 ## External engines (#224, #225, #226, #235)
 
 - Conformance and SDK tests run `sonarad --keys fake`: keys live in `<home>\fake-keys.json`,
-  never in Credential Manager.
+  never in Credential Manager or the Keychain.
 - The `command` kind's tests run `crates/sonara-engine/src/bin/sonara-fake-tts.rs`
-  (feature `test-util`).
+  (feature `test-util`). On unix the tests also run `#!/bin/sh` scripts made in a temp folder
+  (a script is a program there; one without its execute bit is refused).
 - Live checks (opt-in, each skips when its variables are unset):
   `cargo test -p sonara-engine --test external_live -- --ignored --nocapture`
 

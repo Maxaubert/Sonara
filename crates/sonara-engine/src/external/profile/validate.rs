@@ -2,9 +2,9 @@
 //! `Profile::validate` and `Profile::check_new`.
 use super::kind::env_name_ok;
 use super::{
-    invalid, KeyRef, Kind, Preset, Profile, ProfileError, Url, AZURE_FORMATS, BUILTIN_IDS,
-    CARTESIA_RATES, CHUNK_CHARS_MAX, CHUNK_CHARS_MIN, COMMAND_MAX_ARGS, COMMAND_MAX_VOICES,
-    DEEPGRAM_RATES, ELEVENLABS_FORMATS,
+    invalid, program_problem, KeyRef, Kind, Preset, Profile, ProfileError, Url, AZURE_FORMATS,
+    BUILTIN_IDS, CARTESIA_RATES, CHUNK_CHARS_MAX, CHUNK_CHARS_MIN, COMMAND_MAX_ARGS,
+    COMMAND_MAX_VOICES, DEEPGRAM_RATES, ELEVENLABS_FORMATS, EXAMPLE_PROGRAM, PROGRAM_KIND,
 };
 use serde_json::{Map, Value};
 
@@ -226,8 +226,8 @@ impl Profile {
     /// back.
     pub fn check_new(&self) -> Result<(), ProfileError> {
         if let Some(program) = self.command_program() {
-            if !std::path::Path::new(program).is_file() {
-                return Err(invalid(format!("the program '{program}' does not exist")));
+            if let Some(why) = program_problem(std::path::Path::new(program)) {
+                return Err(invalid(format!("the program '{program}' {why}")));
             }
         }
         Ok(())
@@ -376,10 +376,10 @@ impl Profile {
         let argv = match o.get("argv") {
             Some(Value::Array(a)) if !a.is_empty() => a,
             _ => {
-                return Err(invalid(
+                return Err(invalid(format!(
                     "kind 'command' needs options.argv: the full path of the program \
-                     (an .exe) and its arguments",
-                ))
+                     ({PROGRAM_KIND}) and its arguments"
+                )))
             }
         };
         if argv.len() > COMMAND_MAX_ARGS {
@@ -401,20 +401,26 @@ impl Profile {
         let program = std::path::Path::new(args[0]);
         if !program.is_absolute() || args[0].contains('{') {
             return Err(invalid(format!(
-                "argv[0] '{}' must be the full path of the program, such as C:\\Tools\\tts.exe",
+                "argv[0] '{}' must be the full path of the program, such as {EXAMPLE_PROGRAM}",
                 args[0]
             )));
         }
-        let exe = program
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
-        if !exe {
-            return Err(invalid(format!(
-                "argv[0] '{}' must be an .exe (a .bat or .cmd runs through the command \
-                 shell, which would read the text as commands)",
-                args[0]
-            )));
+        // On Windows only an .exe: a .bat or .cmd runs through cmd.exe. On
+        // unix any executable file, a `#!` script too: execve parses no
+        // shell syntax in the arguments.
+        #[cfg(windows)]
+        {
+            let exe = program
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+            if !exe {
+                return Err(invalid(format!(
+                    "argv[0] '{}' must be an .exe (a .bat or .cmd runs through the command \
+                     shell, which would read the text as commands)",
+                    args[0]
+                )));
+            }
         }
         let has = |p: &str| args[1..].iter().any(|a| a.contains(p));
         // The text read is never put on the command line (security review

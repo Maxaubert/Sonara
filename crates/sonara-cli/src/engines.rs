@@ -296,7 +296,12 @@ pub fn done_line(request: &Value, reply: &Value) -> String {
                 )
             },
             reply["engine"]["id"].as_str().unwrap_or("?"),
-            if reply["engine"]["key_present"] == false && reply["engine"]["key_ref"] == "credman" {
+            if reply["engine"]["key_present"] == false
+                && matches!(
+                    reply["engine"]["key_ref"].as_str(),
+                    Some("credman" | "keychain")
+                )
+            {
                 format!(
                     "; store its key first with `sonara engines key {}`",
                     reply["engine"]["id"].as_str().unwrap_or("?")
@@ -459,7 +464,39 @@ fn prompt_hidden(prompt: &str) -> Result<String, String> {
     Ok(line)
 }
 
-#[cfg(not(windows))]
+/// Unix: the terminal's echo is off while the key is typed (termios).
+#[cfg(unix)]
+fn prompt_hidden(prompt: &str) -> Result<String, String> {
+    use std::io::{BufRead, Write};
+    eprint!("{prompt}");
+    let _ = std::io::stderr().flush();
+    let fd = libc::STDIN_FILENO;
+    // SAFETY: termios is plain data, filled by tcgetattr before any use;
+    // the process's own stdin, whose mode is restored below.
+    let old = unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut t) != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let old = t;
+        t.c_lflag &= !libc::ECHO;
+        if libc::tcsetattr(fd, libc::TCSANOW, &t) != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        old
+    };
+    let mut line = String::new();
+    let read = std::io::stdin().lock().read_line(&mut line);
+    // SAFETY: as above.
+    unsafe {
+        libc::tcsetattr(fd, libc::TCSANOW, &old);
+    }
+    eprintln!();
+    read.map_err(|e| e.to_string())?;
+    Ok(line)
+}
+
+#[cfg(not(any(windows, unix)))]
 fn prompt_hidden(_prompt: &str) -> Result<String, String> {
     Err("pipe the key in: echo KEY | sonara engines key <id>".into())
 }
@@ -686,6 +723,25 @@ cartesia, deepgram, command"
                  engines voices ge`)"
             ]
         );
+    }
+
+    /// A new engine without its key says how to store it, whether the
+    /// runtime names the store `credman` (Windows) or `keychain` (macOS).
+    #[test]
+    fn an_added_engine_without_its_key_says_to_store_it_on_every_platform() {
+        let req = json!({"type": "engine_add"});
+        for store in ["credman", "keychain"] {
+            let reply = json!({"engine": {"id": "oa", "local": false,
+                "sends_text_to": "api.openai.com", "key_ref": store, "key_present": false}});
+            assert!(
+                done_line(&req, &reply)
+                    .ends_with("store its key first with `sonara engines key oa`."),
+                "{store}"
+            );
+        }
+        let env = json!({"engine": {"id": "oa", "local": false,
+            "sends_text_to": "api.openai.com", "key_ref": "env:OA_API_KEY", "key_present": false}});
+        assert!(!done_line(&req, &env).contains("store its key"));
     }
 
     #[test]

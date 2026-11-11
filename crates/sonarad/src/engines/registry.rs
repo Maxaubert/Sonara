@@ -157,9 +157,9 @@ impl Engines {
             Self::check_secret(s)?;
             match raw.get("key_ref") {
                 None | Some(Value::Null) => {
-                    raw.insert("key_ref".into(), json!("credman"));
+                    raw.insert("key_ref".into(), json!(OS_KEY_REF));
                 }
-                Some(Value::String(k)) if k == "credman" => {}
+                Some(Value::String(k)) if k == "credman" || k == "keychain" => {}
                 Some(Value::String(k)) if k.starts_with("env:") => {
                     return Err(bad(format!(
                         "this engine reads its key from the environment variable {}; \
@@ -299,10 +299,12 @@ impl Engines {
             Self::check_secret(s)?;
             match raw.get("key_ref") {
                 None | Some(Value::Null) => {
-                    raw.insert("key_ref".into(), json!("credman"));
+                    raw.insert("key_ref".into(), json!(OS_KEY_REF));
                 }
-                Some(Value::String(k)) if k == "credman" => {}
-                Some(_) => return Err(bad("send a secret only with key_ref credman")),
+                Some(Value::String(k)) if k == "credman" || k == "keychain" => {}
+                Some(_) => {
+                    return Err(bad(format!("send a secret only with key_ref {OS_KEY_REF}")))
+                }
             }
         }
         let profile = Profile::from_json(&Value::Object(raw)).map_err(profile_failure)?;

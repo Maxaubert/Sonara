@@ -83,7 +83,9 @@ engine, never dropped. Unmuted, the next sentence goes to the engine again.
 ## Keys
 
 **Keys.** A key goes in only through `engine_add` (`secret`) or `engine_key` and is kept in Windows
-Credential Manager (generic credential `sonara:<id>`, this user on this PC), or read from an
+Credential Manager (generic credential `sonara:<id>`, this user on this PC) or, on macOS, the
+user's Keychain (generic password, service `sonara`, account `<id>`, the data JSON `{secret,
+origin}`), or read from an
 environment variable of the runtime's process (`key_ref` `env:NAME`). It is never in a file of the
 home, a log line or a reply, and goes only in the provider's authentication header, over HTTPS or to
 a loopback host. The `in` lines of the troubleshooting log drop the `secret` field entirely.
@@ -122,7 +124,7 @@ origin has no path, so a replace that changes only the path on the same host kee
 | `label` | 1 to 40 characters; spoken in cues. Default: the preset's name (`openai-compatible`), else `ElevenLabs`, `Azure Speech`, `Google Text-to-Speech`, `Gemini`, `Cartesia`, `Deepgram` or `The speech program` |
 | `url` | `openai-compatible`: the base URL with the API version, e.g. `https://api.openai.com/v1`, `http://127.0.0.1:8880/v1`; the cloud kinds: optional, below; `command`: none. HTTPS, or plain HTTP to a loopback host (`localhost`, `127.0.0.0/8`, `::1`), or with `options.allow_http` to a server on the network (then never with a key); no user, query or fragment. A loopback server is reached without a proxy, IPv4 first (so `localhost` reaches a server on 127.0.0.1 at once), with a 0.5 s connect timeout (a stopped server falls back quickly; remote providers get 5 s) |
 | `model`, `voice` | up to 200 characters. **Sonara names no model or voice of its own** (since 0.19.0, #235): models and voices change at the provider, so they come from the provider's live lists (`engine_models`, `voices`) or are typed in. The model is required where the provider needs one in every request (`gemini`, `cartesia`, and the `openai`, `localai` and `speaches` presets) and optional where the provider picks its own when none is sent (`elevenlabs`, the other presets: then none is sent); `azure`, `google`, `deepgram` and `command` take none. Every kind but `command` needs a voice: [the voice rule](#the-voice-rule) says which one is used. A profile without a model or voice it needs is still valid (one stored by an older runtime keeps working): it reads with the built-in engine and its status is `bad_config`, "Choose a model for <label> in Sonara's settings (Engines)." or "Choose a voice for <label> in Sonara's settings.", until one is set |
-| `key_ref` | `"none"`, `"credman"` or `"env:NAME"`, where `NAME` ends in `_API_KEY` or `_SPEECH_KEY`, is `SPEECH_KEY`, or starts with `SONARA_` (case-insensitive; any other variable is `E_BAD_REQUEST`, so a client cannot send the runtime's other secrets to a server it chose). Default: `none` for an `openai-compatible` loopback server and for `command`, `credman` otherwise (a cloud kind needs a key even behind a loopback URL) |
+| `key_ref` | `"none"`, `"credman"` or `"keychain"` (the OS key store: both names are taken on every platform, and a view and `engines.json` use the runtime's own, `keychain` on macOS and `credman` elsewhere; `keychain` came with the macOS runtime, an additive value with no minor bump), or `"env:NAME"`, where `NAME` ends in `_API_KEY` or `_SPEECH_KEY`, is `SPEECH_KEY`, or starts with `SONARA_` (case-insensitive; any other variable is `E_BAD_REQUEST`, so a client cannot send the runtime's other secrets to a server it chose). Default: `none` for an `openai-compatible` loopback server and for `command`, the OS key store otherwise (a cloud kind needs a key even behind a loopback URL) |
 | `send_mode` | "Send to the engine" (since 0.19.0, #235): `"message"` or `"sentence"`, below. Optional: unset (or `null`) is the kind's default, `"sentence"` for `command` and an `openai-compatible` server at a loopback address, `"message"` for every other kind (a cloud kind also behind a local proxy, as for its key). Only a value the profile sets is stored; the view's `send_mode` is the mode in force and `explicit.send_mode` the stored one |
 | `options` | per kind, below; an unknown option is `E_BAD_REQUEST` |
 
@@ -342,7 +344,8 @@ protocol as for any profile. The reason: the token is shared with the settings p
 and with every client, so a protocol message that names a program to run would turn any exposure of
 the token into running code. `options.argv` (required) is the program's full path (an `.exe` that
 exists: checked by `sonara engines add` and again before every start; a `.bat` or `.cmd` is refused,
-as the command shell would read its arguments as commands) and its arguments, at most 64. It is
+as the command shell would read its arguments as commands; on macOS any file with an execute bit,
+a `#!` script too, as `execve` reads no shell syntax) and its arguments, at most 64. It is
 started directly, never through a shell (`cmd /c`) or a command line built from text: each `argv`
 entry is passed as one argument (quoted for Windows by the runtime), so characters such as `&`, `|`,
 `>`, `^`, `%` or `"` in an argument reach the program as they are. **The text read is never an
@@ -363,9 +366,9 @@ key, when `key_ref` names one, is passed in the environment variable `SONARA_ENG
 an argument. Outcomes: a program that cannot start (or no longer exists) is `bad_config`, an exit
 code other than 0 is `server` (with the last line of its error output, with the key cut out and
 masked), no output or output that is not WAV/PCM is `format`, and over `timeout_ms` (default 30 s)
-or on a cancel the process is killed (`timeout`), with every process it started (a Job Object); a
-process it leaves running when it exits is ended too, so a program must not hand its work to a child
-that outlives it. A stored profile whose program went away stays and reads with the fallback until
+or on a cancel the process is killed (`timeout`), with every process it started (a Job Object; on
+macOS its own process group, `killpg`); a process it leaves running when it exits is ended too, so a
+program must not hand its work to a child that outlives it. A stored profile whose program went away stays and reads with the fallback until
 it is back.
 
 ## The profile view
@@ -396,7 +399,7 @@ A request's `id` is its correlation id (echoed in the reply), so these messages 
 | message | fields | reply |
 |---|---|---|
 | `engine_list` | none | `{engines: [view...], builtin: ["kokoro", "onecore"], kinds: ["openai-compatible", "elevenlabs", "azure", "google", "gemini", "cartesia", "deepgram", "command"], presets: [...]}` |
-| `engine_add` | `engine` (the profile), `secret?` (stored as its key; sets `key_ref` `credman` when absent, `E_BAD_REQUEST` with `env:` or `none`), `replace?` (default `false`) | `{engine: view}`. Validates, saves `engines.json`, stores the key, registers the engine; it does not select it. Kind `command`, or an id that is a `command` profile, is `E_FORBIDDEN` (protocol 1.3; above). An existing id without `replace: true` is `E_BAD_REQUEST`; a replace keeps the stored key unless `secret` is given or the origin changes (then the key is deleted, see Keys), forgets the engine's failures and cached audio, and applies to the next sentence when it is the current engine |
+| `engine_add` | `engine` (the profile), `secret?` (stored as its key; sets `key_ref` to the OS key store, `credman` or `keychain`, when absent, `E_BAD_REQUEST` with `env:` or `none`), `replace?` (default `false`) | `{engine: view}`. Validates, saves `engines.json`, stores the key, registers the engine; it does not select it. Kind `command`, or an id that is a `command` profile, is `E_FORBIDDEN` (protocol 1.3; above). An existing id without `replace: true` is `E_BAD_REQUEST`; a replace keeps the stored key unless `secret` is given or the origin changes (then the key is deleted, see Keys), forgets the engine's failures and cached audio, and applies to the next sentence when it is the current engine |
 | `engine_remove` | `engine`, `forget_key?` (default `true`) | `{removed: "<id>", engine: "<engine now in force>"}`. The current engine is first switched to the default choice (Kokoro when installed, else OneCore; saved like any `set`); then the engine is unregistered, removed from `engines.json` and its stored key deleted |
 | `engine_key` | `engine`, `secret` (a string, or `null` to delete) | `{engine, key_present}`; the key is bound to the profile's origin now; clears a `no_key` or `auth` block. `E_BAD_REQUEST` for a profile whose `key_ref` is `env:` or `none` |
 | `engine_reload` | none (protocol 1.3; any other field is ignored: it never takes a profile) | `engine_list`'s fields plus `problems` (the lines also logged). Reads `engines.json` again after the user or `sonara engines add --kind command` changed it: an unchanged profile keeps its engine, a changed one is replaced (applies to the next sentence when current), one that is gone or now unusable is unregistered, and a current engine that went away is switched to the default choice (saved like any `set`). A stored key whose address (or, for a `command`, program) is no longer its entry's is deleted (see Keys); other keys are untouched. A file that is not JSON is `E_BAD_REQUEST` and changes nothing. `engine_add` and `engine_remove` first read `engines.json` again when it changed on disk since the runtime last read or saved it, so a save never writes an older list over the user's edit (a file that is not JSON fails them the same way and is not overwritten) |
@@ -421,7 +424,7 @@ A request's `id` is its correlation id (echoed in the reply), so these messages 
 | an unknown profile id | `E_NOT_FOUND` |
 | `engine_add` of a `command` engine, or replacing one | `E_FORBIDDEN` |
 | the runtime refuses external engines; a kind this runtime lacks | `E_UNSUPPORTED` |
-| Credential Manager failed; `engine_test` failed | `E_ENGINE` |
+| Credential Manager or the Keychain failed; `engine_test` failed | `E_ENGINE` |
 
 ## The voice rule
 

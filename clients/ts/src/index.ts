@@ -13,7 +13,7 @@ export type { Unsubscribe } from "./client.js";
 export { SonaraError } from "./errors.js";
 export type { ErrorCode } from "./errors.js";
 export { AgentApi, ChannelsApi, SystemApi } from "./extensions.js";
-export { EnginesApi } from "./engines.js";
+export { EnginesApi, isStoredKey, KEY_STORES } from "./engines.js";
 export type {
   EngineAddOptions,
   EngineModelsDraft,

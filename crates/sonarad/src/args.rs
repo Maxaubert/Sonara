@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake|ID] \
 [--output device|null|wav:DIR] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
-       [--keys windows|fake] [--no-external-engines] [--migrate-from DIR] [--version]
+       [--keys os|fake] [--no-external-engines] [--migrate-from DIR] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
   --engine ID         engine to start with (default: the saved one, else kokoro
@@ -21,9 +21,10 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
   --system KIND       platform of the 'system' extension: 'windows' (default)
                       or 'fake', a testing aid that keeps fake apps, media
                       and hotkeys in <home>\\fake-system.json
-  --keys KIND         where external engine keys are kept: 'windows'
-                      (default, Windows Credential Manager) or 'fake', a
-                      testing aid that keeps them in <home>\\fake-keys.json
+  --keys KIND         where external engine keys are kept: 'os' (default:
+                      Windows Credential Manager, the macOS Keychain;
+                      'windows' is an alias) or 'fake', a testing aid
+                      that keeps them in <home>\\fake-keys.json
   --no-external-engines
                       refuse external engines (speech servers and cloud
                       services the user adds): no 'engines' capability
@@ -46,8 +47,9 @@ pub enum OutputKind {
 /// Where external engine keys are kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeysKind {
-    /// Windows Credential Manager.
-    Windows,
+    /// The OS key store: Windows Credential Manager, the macOS Keychain
+    /// (`--keys os`, alias `windows`).
+    Os,
     /// `<home>\fake-keys.json` (tests).
     Fake,
 }
@@ -93,7 +95,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     let mut system = SystemKind::Windows;
     let mut idle_exit = crate::lifetime::DEFAULT_IDLE_EXIT;
     let mut standalone = false;
-    let mut keys = KeysKind::Windows;
+    let mut keys = KeysKind::Os;
     let mut external_engines = true;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -132,7 +134,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             "--standalone" => standalone = true,
             "--keys" => {
                 keys = match value("--keys")?.as_str() {
-                    "windows" => KeysKind::Windows,
+                    "os" | "windows" => KeysKind::Os,
                     "fake" => KeysKind::Fake,
                     other => return Err(format!("unknown --keys '{other}'")),
                 }
@@ -181,7 +183,7 @@ mod tests {
         assert!(!a.standalone);
         assert_eq!(a.system, SystemKind::Windows);
         assert_eq!(a.migrate_from, None);
-        assert_eq!(a.keys, KeysKind::Windows);
+        assert_eq!(a.keys, KeysKind::Os);
         assert!(a.external_engines);
     }
 
@@ -190,6 +192,9 @@ mod tests {
         let a = run(&["--keys", "fake", "--no-external-engines"]);
         assert_eq!(a.keys, KeysKind::Fake);
         assert!(!a.external_engines);
+        // `os` is this platform's store; `windows` stays an alias of it.
+        assert_eq!(run(&["--keys", "os"]).keys, KeysKind::Os);
+        assert_eq!(run(&["--keys", "windows"]).keys, KeysKind::Os);
         assert!(parse(["--keys".to_string(), "vault".to_string()]).is_err());
     }
 

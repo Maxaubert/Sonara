@@ -6,8 +6,11 @@
  * engines (`sonarad --no-external-engines`) answers `E_UNSUPPORTED`.
  *
  * A key is sent only in `add` (`secret`), `setKey`, or with a draft profile
- * in `models`; the runtime stores it in Windows Credential Manager (a
- * draft's only for that request) and never returns it.
+ * in `models`; the runtime stores it in the OS key store, Windows Credential
+ * Manager or the macOS Keychain (a draft's only for that request), and never
+ * returns it. A profile's `key_ref` names that store `"credman"` (Windows) or
+ * `"keychain"` (macOS); a runtime takes either on every platform
+ * (`KEY_STORES`, `isStoredKey`).
  *
  * Sonara names no model or voice of its own (protocol 1.5, runtime 0.19.0):
  * `models` and `voices` list the provider's live, and a profile without one
@@ -29,6 +32,18 @@ import type { Reply } from "./types.js";
 
 export type Send = (type: string, fields: Record<string, unknown>) => Promise<Reply>;
 
+/**
+ * The `key_ref` values that name the OS key store: `"credman"` (Windows
+ * Credential Manager) and `"keychain"` (the macOS Keychain). A view says
+ * the runtime platform's name; a profile may send either.
+ */
+export const KEY_STORES: readonly string[] = ["credman", "keychain"];
+
+/** Whether a `key_ref` is a key kept in the OS key store (not `none`, not `env:`). */
+export function isStoredKey(keyRef: string | null | undefined): boolean {
+  return keyRef != null && KEY_STORES.includes(keyRef);
+}
+
 /** How text goes to an engine (#235): a whole message, or each sentence. */
 export type SendMode = "message" | "sentence";
 
@@ -40,7 +55,7 @@ export interface EngineProfile {
   url?: string;
   model?: string;
   voice?: string;
-  /** `"none"`, `"credman"` or `"env:NAME"`. */
+  /** `"none"`, `"credman"` or `"keychain"` (the OS key store), or `"env:NAME"`. */
   key_ref?: string | null;
   /** Unset (or null): the kind's default (`message` for the cloud). */
   send_mode?: SendMode | null;
@@ -48,7 +63,7 @@ export interface EngineProfile {
 }
 
 export interface EngineAddOptions {
-  /** Stored in Credential Manager (forces `key_ref` `credman` when unset). */
+  /** Stored in the OS key store (sets `key_ref` to the store's name when unset). */
   secret?: string;
   /** Change an existing profile; its stored key is kept unless `secret` is given. */
   replace?: boolean;

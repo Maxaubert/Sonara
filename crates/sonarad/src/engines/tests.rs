@@ -304,7 +304,10 @@ fn keys_and_removal() {
 #[test]
 fn command_profiles_come_only_from_the_file() {
     let h = home();
+    #[cfg(windows)]
     let missing = "C:\\Nope\\sonara-missing-tts.exe";
+    #[cfg(not(windows))]
+    let missing = "/nonexistent-sonara/sonara-missing-tts";
     let exe = std::env::current_exe().unwrap().display().to_string();
     std::fs::write(
         h.join(FILE),

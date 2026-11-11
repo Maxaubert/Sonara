@@ -1,10 +1,12 @@
 //! Keys of external engines (spec section 6): Windows Credential Manager
-//! (target `sonara:<profile id>`) or an environment variable the profile
-//! names. A key is never in a file of the home (the `FileStore` is a
-//! testing aid for `sonarad --keys fake`), never logged, never in a reply.
+//! (target `sonara:<profile id>`), the macOS Keychain (generic password,
+//! service `sonara`, account `<profile id>`) or an environment variable the
+//! profile names. A key is never in a file of the home (the `FileStore` is
+//! a testing aid for `sonarad --keys fake`), never logged, never in a reply.
 //!
 //! A stored key is bound to the origin (`scheme://host:port`) it was
-//! entered for (spec 6.4), kept with the secret (a credential attribute).
+//! entered for (spec 6.4), kept with the secret (a credential attribute;
+//! in the Keychain the item's data is JSON `{"secret", "origin"}`).
 //! The resolver refuses a key whose origin is not the profile's now, so a
 //! protocol client that retargets a profile never gets its key sent to
 //! another server. An `env:` key goes only to the provider's default origin
@@ -24,6 +26,14 @@ pub const TARGET_PREFIX: &str = "sonara:";
 pub const ORIGIN_ATTRIBUTE: &str = "sonara-origin";
 /// The longest origin a credential attribute holds (CRED_MAX_VALUE_SIZE).
 pub const MAX_ORIGIN_BYTES: usize = 256;
+/// The Keychain service of every key (macOS); the account is the profile id.
+pub const KEYCHAIN_SERVICE: &str = "sonara";
+
+/// This platform's key store as messages name it.
+#[cfg(target_os = "macos")]
+pub const STORE_NAME: &str = "Keychain";
+#[cfg(not(target_os = "macos"))]
+pub const STORE_NAME: &str = "Credential Manager";
 
 /// A secret value. `Debug` and `Display` print `[redacted]`, there is no
 /// `Serialize`, and the buffer is overwritten with zeros on drop (best
@@ -86,7 +96,7 @@ impl StoredKey {
 /// Why a key store failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyError {
-    /// No Credential Manager in this build (not Windows).
+    /// No key store in this build (neither Windows nor macOS).
     Unavailable,
     TooLong,
     /// The origin does not fit a credential attribute.
@@ -97,12 +107,12 @@ pub enum KeyError {
 impl std::fmt::Display for KeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            KeyError::Unavailable => f.write_str("Credential Manager is not available"),
+            KeyError::Unavailable => write!(f, "{STORE_NAME} is not available"),
             KeyError::TooLong => write!(f, "key too long (at most {MAX_KEY_BYTES} bytes)"),
             KeyError::OriginTooLong => {
                 write!(f, "address too long (at most {MAX_ORIGIN_BYTES} bytes)")
             }
-            KeyError::Os(m) => write!(f, "Credential Manager: {m}"),
+            KeyError::Os(m) => write!(f, "{STORE_NAME}: {m}"),
         }
     }
 }
@@ -451,6 +461,155 @@ impl KeyStore for CredentialStore {
     }
 }
 
+/// The macOS Keychain (the user's default, login keychain): a generic
+/// password per profile, service `sonara` (`KEYCHAIN_SERVICE`), account the
+/// profile id, the data JSON `{"secret": .., "origin": ..}`.
+pub struct KeychainStore;
+
+/// The data of a Keychain item: the secret and the origin it is bound to.
+/// Data that is not that JSON (an item written by hand) is a key with no
+/// origin, which the resolver never sends.
+#[cfg(any(target_os = "macos", test))]
+fn keychain_data(secret: &Secret, origin: &str) -> Vec<u8> {
+    serde_json::json!({"secret": secret.expose(), "origin": origin})
+        .to_string()
+        .into_bytes()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn keychain_key(data: &[u8]) -> StoredKey {
+    let v = serde_json::from_slice::<serde_json::Value>(data).ok();
+    match v
+        .as_ref()
+        .and_then(|v| Some((v.get("secret")?.as_str()?, v.get("origin"))))
+    {
+        Some((secret, origin)) => StoredKey {
+            secret: Secret::new(secret),
+            origin: origin.and_then(|o| o.as_str()).map(str::to_string),
+        },
+        None => StoredKey {
+            secret: Secret::new(String::from_utf8_lossy(data).into_owned()),
+            origin: None,
+        },
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod keychain {
+    use super::{keychain_data, keychain_key, KeyError, Secret, StoredKey, KEYCHAIN_SERVICE};
+    use security_framework::base::Error;
+    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+    use security_framework::passwords::{
+        delete_generic_password, get_generic_password, set_generic_password,
+    };
+
+    /// errSecItemNotFound.
+    const NOT_FOUND: i32 = -25300;
+
+    fn os(e: Error) -> KeyError {
+        KeyError::Os(e.to_string())
+    }
+
+    pub fn get(profile: &str) -> Result<Option<StoredKey>, KeyError> {
+        match get_generic_password(KEYCHAIN_SERVICE, profile) {
+            Ok(mut data) => {
+                let key = keychain_key(&data);
+                data.iter_mut().for_each(|b| *b = 0);
+                Ok(Some(key))
+            }
+            Err(e) if e.code() == NOT_FOUND => Ok(None),
+            Err(e) => Err(os(e)),
+        }
+    }
+
+    pub fn set(profile: &str, secret: &Secret, origin: &str) -> Result<(), KeyError> {
+        let mut data = keychain_data(secret, origin);
+        let r = set_generic_password(KEYCHAIN_SERVICE, profile, &data);
+        data.iter_mut().for_each(|b| *b = 0);
+        r.map_err(os)
+    }
+
+    pub fn delete(profile: &str) -> Result<(), KeyError> {
+        match delete_generic_password(KEYCHAIN_SERVICE, profile) {
+            Ok(()) => Ok(()),
+            Err(e) if e.code() == NOT_FOUND => Ok(()),
+            Err(e) => Err(os(e)),
+        }
+    }
+
+    /// The accounts of every item of the service (an exact match: the
+    /// Keychain compares the whole service name).
+    pub fn list() -> Result<Vec<String>, KeyError> {
+        let found = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(KEYCHAIN_SERVICE)
+            .load_attributes(true)
+            .limit(Limit::All)
+            .search();
+        let items = match found {
+            Ok(items) => items,
+            Err(e) if e.code() == NOT_FOUND => return Ok(Vec::new()),
+            Err(e) => return Err(os(e)),
+        };
+        let mut out: Vec<String> = items
+            .iter()
+            .filter_map(|i| i.simplify_dict())
+            .filter(|d| d.get("svce").map(String::as_str) == Some(KEYCHAIN_SERVICE))
+            .filter_map(|mut d| d.remove("acct"))
+            .collect();
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+}
+
+impl KeyStore for KeychainStore {
+    fn get(&self, profile: &str) -> Result<Option<StoredKey>, KeyError> {
+        #[cfg(target_os = "macos")]
+        return keychain::get(profile);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = profile;
+            Err(KeyError::Unavailable)
+        }
+    }
+    fn set(&self, profile: &str, secret: &Secret, origin: &str) -> Result<(), KeyError> {
+        check_len(secret, origin)?;
+        #[cfg(target_os = "macos")]
+        return keychain::set(profile, secret, origin);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = profile;
+            Err(KeyError::Unavailable)
+        }
+    }
+    fn delete(&self, profile: &str) -> Result<(), KeyError> {
+        #[cfg(target_os = "macos")]
+        return keychain::delete(profile);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = profile;
+            Err(KeyError::Unavailable)
+        }
+    }
+    fn list(&self) -> Result<Vec<String>, KeyError> {
+        #[cfg(target_os = "macos")]
+        return keychain::list();
+        #[cfg(not(target_os = "macos"))]
+        Err(KeyError::Unavailable)
+    }
+}
+
+/// This platform's own key store (`sonarad --keys os`): Credential Manager
+/// on Windows, the Keychain on macOS.
+pub fn os_store() -> Arc<dyn KeyStore> {
+    if cfg!(target_os = "macos") {
+        Arc::new(KeychainStore)
+    } else {
+        Arc::new(CredentialStore)
+    }
+}
+
 /// Finds the key of a profile at the moment it is needed.
 #[derive(Clone)]
 pub struct KeyResolver {
@@ -544,6 +703,46 @@ mod tests {
         Profile::from_json(&json!({"id": "p", "kind": "openai-compatible",
             "url": "https://tts.example.com/v1", "key_ref": key_ref}))
         .unwrap()
+    }
+
+    /// A Keychain item's data is JSON with the secret and its origin;
+    /// anything else (an item written by hand) is a key bound to nothing,
+    /// which the resolver never sends.
+    #[test]
+    fn keychain_data_keeps_the_secret_with_its_origin() {
+        let data = keychain_data(&Secret::new("sk-\"q\"\\x"), "https://a.example:443");
+        let k = keychain_key(&data);
+        assert_eq!(
+            (k.expose(), k.origin.as_deref()),
+            ("sk-\"q\"\\x", Some("https://a.example:443"))
+        );
+        let raw = keychain_key(b"sk-typed-by-hand");
+        assert_eq!(
+            (raw.expose(), raw.origin.as_deref()),
+            ("sk-typed-by-hand", None)
+        );
+        let no_origin = keychain_key(br#"{"secret": "sk-1"}"#);
+        assert_eq!(
+            (no_origin.expose(), no_origin.origin.as_deref()),
+            ("sk-1", None)
+        );
+    }
+
+    /// `credman` and `keychain` both name the OS store on every platform;
+    /// a view and a saved profile say this platform's name.
+    #[test]
+    fn key_ref_credman_and_keychain_are_the_os_store() {
+        for name in ["credman", "keychain"] {
+            let p = profile(name);
+            assert_eq!(p.key_ref, KeyRef::CredMan, "{name}");
+            assert_eq!(p.key_ref.as_wire(), super::super::profile::OS_KEY_REF);
+        }
+        let want = if cfg!(target_os = "macos") {
+            "keychain"
+        } else {
+            "credman"
+        };
+        assert_eq!(KeyRef::CredMan.as_wire(), want);
     }
 
     #[test]

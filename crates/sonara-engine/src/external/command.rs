@@ -5,7 +5,8 @@
 //! - **Local only**: a `command` profile comes from `engines.json`, which
 //!   the user edits or `sonara engines add --kind command` writes; the
 //!   protocol never adds or changes one (security review of PR3).
-//! - **No shell**: `argv[0]` is the full path of an `.exe` (validated, and
+//! - **No shell**: `argv[0]` is the full path of an `.exe` on Windows, of
+//!   an executable file (a `#!` script too) on unix (validated, and
 //!   checked to exist before each start), started directly with its
 //!   arguments (`std::process::Command`, which quotes each one for Windows),
 //!   so a `&` or `|` in an argument reaches the program as it is. No
@@ -24,14 +25,15 @@
 //!   (never an argument); otherwise that variable is removed. The key is
 //!   cut out of any stderr text kept for a failure message.
 //! - **Ends**: over `timeout_ms` or on a cancel the process is killed,
-//!   with every process it started (a Job Object). When the program exits,
+//!   with every process it started (a Job Object on Windows, its own
+//!   process group and `killpg` on unix). When the program exits,
 //!   any child it left running is ended too, so it cannot hold the output
 //!   pipe open.
 use super::adapter::{VoiceInfo, MAX_AUDIO_BODY};
 use super::audio::decode_body;
 use super::error::{clean, ExtError};
 use super::keys::Secret;
-use super::profile::{program_name, Kind, Profile};
+use super::profile::{program_name, program_problem, Kind, Profile};
 use super::rate;
 use super::split::Limit;
 use crate::{PcmChunk, Reason};
@@ -221,7 +223,36 @@ mod tree {
     }
 }
 
-#[cfg(not(windows))]
+/// On unix the program leads a process group of its own
+/// (`process_group(0)` at spawn), so `killpg` ends it with every process
+/// it started that stayed in the group; also on drop, like the Job
+/// Object's close. A group already gone (`ESRCH`) is fine.
+#[cfg(unix)]
+mod tree {
+    pub struct Tree(libc::pid_t);
+
+    impl Tree {
+        pub fn new(child: &std::process::Child) -> Option<Tree> {
+            libc::pid_t::try_from(child.id()).ok().map(Tree)
+        }
+
+        pub fn kill(&self) {
+            // SAFETY: a plain syscall on the group this value's program
+            // leads; a stale group fails with ESRCH and changes nothing.
+            unsafe {
+                libc::killpg(self.0, libc::SIGKILL);
+            }
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            self.kill();
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
 mod tree {
     pub struct Tree;
 
@@ -371,10 +402,15 @@ impl Command {
         // Only ever the absolute path that was validated: never a search of
         // PATH or the current folder for a program by that name.
         let program = Path::new(&self.argv[0]);
-        if !program.is_absolute() || !program.is_file() {
+        let problem = if program.is_absolute() {
+            program_problem(program)
+        } else {
+            Some("does not exist")
+        };
+        if let Some(why) = problem {
             return Err(self.err(
                 Reason::BadConfig,
-                "cannot start: the program does not exist",
+                format_args!("cannot start: the program {why}"),
             ));
         }
         let out = (self.output == Output::File).then(|| TempFile::new("wav"));
@@ -418,6 +454,12 @@ impl Command {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        // A process group of its own, which `tree` kills as one.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
         }
         let mut child = cmd
             .spawn()
@@ -539,10 +581,20 @@ mod tests {
         )
     }
 
+    /// A program path of this platform (it need not exist).
+    #[cfg(windows)]
+    fn tool(name: &str) -> String {
+        format!("C:\\Tools\\{name}.exe")
+    }
+    #[cfg(not(windows))]
+    fn tool(name: &str) -> String {
+        format!("/opt/sonara-test-tools/{name}")
+    }
+
     #[test]
     fn placeholders_are_filled_in_every_argument() {
         let c = command(
-            json!({"argv": ["C:\\Tools\\tts.exe", "--voice={voice}", "-r", "{rate}",
+            json!({"argv": [tool("tts"), "--voice={voice}", "-r", "{rate}",
             "-s", "{speed}", "-o", "{out}", "-i", "{in}"], "input": "file", "output": "file"}),
         );
         assert_eq!(
@@ -567,13 +619,13 @@ mod tests {
         assert_eq!(c.args("", 200, None, None)[4], "1.00");
         assert_eq!(c.input, Input::File);
         assert_eq!(c.output, Output::File);
-        assert_eq!(c.program, "tts.exe");
+        assert_eq!(c.program, program_name(&tool("tts")));
     }
 
     /// One pass: a voice that holds a placeholder is not filled in again.
     #[test]
     fn a_value_is_never_filled_in_twice() {
-        let c = command(json!({"argv": ["C:\\Tools\\tts.exe", "{voice}|{rate}|{nope}"]}));
+        let c = command(json!({"argv": [tool("tts"), "{voice}|{rate}|{nope}"]}));
         assert_eq!(c.args("{rate}", 200, None, None), vec!["{rate}|200|{nope}"]);
     }
 
@@ -581,8 +633,7 @@ mod tests {
     /// one), and never reads as an option.
     #[test]
     fn a_voice_in_argv_is_checked() {
-        let listed =
-            command(json!({"argv": ["C:\\Tools\\tts.exe", "-v", "{voice}"], "voices": ["amy"]}));
+        let listed = command(json!({"argv": [tool("tts"), "-v", "{voice}"], "voices": ["amy"]}));
         assert!(listed.check_voice("amy").is_ok());
         assert!(
             listed.check_voice("").is_ok(),
@@ -595,7 +646,7 @@ mod tests {
             "{}",
             e.message
         );
-        let open = command(json!({"argv": ["C:\\Tools\\tts.exe", "-v", "{voice}"]}));
+        let open = command(json!({"argv": [tool("tts"), "-v", "{voice}"]}));
         assert!(open.check_voice("en_US-amy-medium").is_ok());
         for bad in ["--output=C:\\x", "-v", "a\nb", "x".repeat(201).as_str()] {
             assert_eq!(
@@ -604,7 +655,7 @@ mod tests {
                 "{bad}"
             );
         }
-        let unused = command(json!({"argv": ["C:\\Tools\\tts.exe"]}));
+        let unused = command(json!({"argv": [tool("tts")]}));
         assert!(unused.check_voice("--anything").is_ok(), "{{voice}} unused");
     }
 
@@ -613,7 +664,7 @@ mod tests {
     /// that would change what the user's program loads.
     #[test]
     fn a_voice_without_a_list_is_a_plain_name_never_a_path() {
-        let open = command(json!({"argv": ["C:\\piper\\piper.exe", "--model", "{voice}"]}));
+        let open = command(json!({"argv": [tool("piper"), "--model", "{voice}"]}));
         for good in ["en_US-amy-medium", "amy.onnx", "v2", "\u{e9}l\u{e9}na"] {
             assert!(open.check_voice(good).is_ok(), "{good}");
         }
@@ -632,7 +683,7 @@ mod tests {
             assert!(e.message.contains("plain name"), "{}", e.message);
         }
         let listed = command(json!({
-            "argv": ["C:\\piper\\piper.exe", "--model", "{voice}"],
+            "argv": [tool("piper"), "--model", "{voice}"],
             "voices": ["C:\\piper\\amy.onnx"]
         }));
         assert!(
@@ -643,7 +694,7 @@ mod tests {
 
     #[test]
     fn defaults_and_voices() {
-        let c = command(json!({"argv": ["C:\\Tools\\tts.exe"], "voices": ["amy", "joe"]}));
+        let c = command(json!({"argv": [tool("tts")], "voices": ["amy", "joe"]}));
         assert_eq!((c.input, c.output), (Input::Stdin, Output::StdoutWav));
         assert_eq!(c.timeout, Duration::from_secs(30));
         assert_eq!(
@@ -655,13 +706,40 @@ mod tests {
 
     #[test]
     fn a_missing_program_is_bad_config() {
-        let c = command(json!({"argv": ["C:\\Nope\\sonara-missing-tts.exe"]}));
+        let missing = tool("sonara-missing-tts");
+        let c = command(json!({"argv": [missing]}));
         let e = c.run("x", "", 200, None, &|| false).unwrap_err();
         assert_eq!(e.reason, Reason::BadConfig);
         assert_eq!(
             e.message,
-            "The speech program (sonara-missing-tts.exe) cannot start: the program does not exist"
+            format!(
+                "The speech program ({}) cannot start: the program does not exist",
+                program_name(&missing)
+            )
         );
-        assert!(!e.message.contains("C:\\Nope"), "{}", e.message);
+        let folder = &missing[..missing.len() - program_name(&missing).len()];
+        assert!(!e.message.contains(folder), "{}", e.message);
+    }
+
+    /// Unix: a file without an execute bit is never started (and a `#!`
+    /// script with one is a program like any other).
+    #[cfg(unix)]
+    #[test]
+    fn a_program_without_the_execute_bit_is_bad_config() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sonara-cmd-noexec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("tts.sh");
+        std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let c = command(json!({"argv": [script.display().to_string()]}));
+        let e = c.run("x", "", 200, None, &|| false).unwrap_err();
+        assert_eq!(e.reason, Reason::BadConfig);
+        assert_eq!(
+            e.message,
+            "The speech program (tts.sh) cannot start: the program is not executable \
+             (chmod +x it)"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

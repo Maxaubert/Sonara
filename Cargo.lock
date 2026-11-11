@@ -1161,6 +1161,7 @@ dependencies = [
 name = "sonara-agent"
 version = "0.37.2"
 dependencies = [
+ "libc",
  "sonara-audio",
  "sonara-channels",
  "sonara-core",
@@ -1194,6 +1195,8 @@ dependencies = [
 name = "sonara-cli"
 version = "0.37.2"
 dependencies = [
+ "libc",
+ "security-framework",
  "serde_json",
  "sonara-client",
  "windows 0.62.2",
@@ -1221,9 +1224,11 @@ name = "sonara-engine"
 version = "0.37.2"
 dependencies = [
  "base64",
+ "libc",
  "misaki",
  "ort",
  "regex",
+ "security-framework",
  "serde_json",
  "sha2",
  "sonara-engine",

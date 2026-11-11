@@ -566,7 +566,10 @@ fn secret_never_in_trace_log_or_engines_json() {
         .as_object()
         .unwrap()
         .clone();
-    assert_eq!(stored["key_ref"], "credman");
+    assert_eq!(
+        stored["key_ref"],
+        sonara_engine::external::profile::OS_KEY_REF
+    );
 }
 
 /// Whether any request `p` saw carried a key header.
@@ -810,10 +813,26 @@ fn cloud_kinds_never_send_their_key_to_a_new_url_or_region() {
 
 /// A program that exists on every Windows (the profile is only stored and
 /// listed here; nothing runs it).
+#[cfg(windows)]
 fn real_exe() -> String {
     std::env::var("SystemRoot")
         .map(|r| format!("{r}\\System32\\whoami.exe"))
         .unwrap_or_else(|_| "C:\\Windows\\System32\\whoami.exe".into())
+}
+
+/// The same on unix.
+#[cfg(not(windows))]
+fn real_exe() -> String {
+    "/usr/bin/whoami".into()
+}
+
+/// The file name of `real_exe()`.
+fn real_exe_name() -> String {
+    std::path::Path::new(&real_exe())
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn command_profile(id: &str, program: &str) -> Value {
@@ -852,7 +871,7 @@ const FORBIDDEN: &str = "a command engine runs a program on this PC, so it is ne
 #[test]
 fn command_engines_are_never_added_over_the_protocol() {
     let mut r = rig("cmd-forbidden", true);
-    let missing = format!("{}\\no-such-tts.exe", r.home.display());
+    let missing = r.home.join("no-such-tts.exe").display().to_string();
     for http in [false, true] {
         for (profile, replace) in [
             (command_profile("prog", &real_exe()), false),
@@ -936,7 +955,10 @@ fn engine_reload_reads_the_file_the_user_wrote() {
         .map(|e| e["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids, vec!["local", "prog"]);
-    assert_eq!(o["engines"][1]["sends_text_to"], "program whoami.exe");
+    assert_eq!(
+        o["engines"][1]["sends_text_to"],
+        format!("program {}", real_exe_name())
+    );
     assert_eq!(o["engines"][0]["key_present"], true, "keys are untouched");
     let o = r.call(json!({"type": "set", "key": "engine", "value": "prog"}));
     assert_eq!(o["value"], "prog", "registered: {o}");

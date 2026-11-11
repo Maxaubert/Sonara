@@ -14,7 +14,7 @@ kokoro = ["dep:misaki", "dep:ort", "dep:ureq", "dep:sha2", "dep:regex", "dep:ser
 # External engines:
 # profiles the user adds at run time (cloud APIs, local servers), keys in
 # Windows Credential Manager, the HTTP core with fallback.
-external = ["dep:ureq", "dep:serde_json", "dep:windows", "dep:sonara-log", "dep:base64"]
+external = ["dep:ureq", "dep:serde_json", "dep:windows", "dep:sonara-log", "dep:base64", "dep:libc", "dep:security-framework"]
 # The deterministic `fake` engine for tests of higher crates.
 test-util = []
 
@@ -45,6 +45,15 @@ ureq = { version = "3", default-features = false, features = ["rustls-no-provide
 windows = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_System_JobObjects", "Win32_System_Threading"] }
 windows-future = { workspace = true, optional = true }
 
+# `killpg` of a `command` program's process group (feature `external`).
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
+# Keychain keys of external engines (feature `external`); already in the
+# lock through rustls-platform-verifier.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3", optional = true }
+
 [dev-dependencies]
 # The crate's own tests use the fake engine and test the Kokoro engine.
 sonara-engine = { path = ".", features = ["test-util", "kokoro", "external"] }
@@ -53,3 +62,7 @@ serde_json.workspace = true
 base64 = "0.23"
 # The contract tests' schema `pattern` (#275).
 regex.workspace = true
+
+# keychain_live: an item of another service, and no Keychain dialog.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+security-framework = "3"
