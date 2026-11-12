@@ -4,7 +4,7 @@
 use crate::{AudioEvent, ItemId, Output, PcmChunk};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// One call the output received.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +53,8 @@ struct Inner {
     volume: u8,
     /// When set, every play fails at once with this reason (a dead device).
     fail_plays: Option<String>,
+    /// How long each clip takes to start (`late_clips`): a slow machine.
+    clip_delay: Duration,
 }
 
 /// Clones share one recording: give one to the host, keep one in the test.
@@ -94,6 +96,12 @@ impl TestOutput {
     /// it): for tests about timing, such as clips that must not overlap.
     pub fn timed_calls(&self) -> Vec<(Instant, OutputCall)> {
         self.lock().timed.clone()
+    }
+
+    /// Make every clip start `delay` after it was asked for, as on a busy
+    /// machine whose threads wake late.
+    pub fn late_clips(&self, delay: Duration) {
+        self.lock().clip_delay = delay;
     }
 
     /// Every call so far.
@@ -244,6 +252,8 @@ impl Output for TestOutput {
     }
 
     fn play_clip(&mut self, samples: &[i16], sample_rate: u32) {
+        let delay = self.lock().clip_delay;
+        std::thread::sleep(delay);
         self.lock().record(OutputCall::PlayClip {
             samples: samples.len(),
             sample_rate,
