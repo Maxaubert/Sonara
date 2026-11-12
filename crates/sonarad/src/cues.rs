@@ -20,13 +20,21 @@
 //! `duck_level`) is dropped when a newer cue with the same key is waiting,
 //! so a burst of presses or a dragged slider speaks only the last value.
 //! Every cue spoken is reported to `subscribe`rs (the `cue` event).
+//!
+//! Rendered once (2026-11-12): a clip is kept for the engine, voice and
+//! rate in force, so a cue said again only plays it. The mute cues are
+//! rendered ahead of time, when the worker starts and while it is idle
+//! after a new voice or rate, so a mute press is heard at once: Kokoro took
+//! 1.2 s for the first "Unmuted." after a pause.
 use crate::quiet::Quiet;
 use sonara_engine::external::hold;
 use sonara_engine::Registry;
 use sonara_reader::{Key, ReaderHandle, Value};
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::time::Duration;
 
 /// One cue to speak.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +80,15 @@ struct Shared {
 pub struct Cues {
     shared: Arc<Shared>,
 }
+
+/// The mute transition cues, rendered ahead of time.
+pub const MUTE_CUES: [&str; 3] = ["Muted.", "Unmuted.", "Super muted."];
+
+/// How often an idle worker checks for a new voice or rate.
+const IDLE_CHECK: Duration = Duration::from_secs(2);
+
+/// The most clips kept (rate and duck level cues vary).
+const MAX_CLIPS: usize = 32;
 
 /// The cue for a mute level (the agent's three-level cycle).
 pub fn mute_level_cue(level: u64) -> &'static str {
@@ -187,33 +204,64 @@ impl Drop for Cues {
     }
 }
 
+/// What the worker does next.
+enum Next {
+    Speak(Cue),
+    /// Nothing to speak for `IDLE_CHECK`.
+    Idle,
+    Closed,
+}
+
 /// The next cue to speak: a keyed cue with a newer one of the same key
-/// waiting is skipped. `None` once closed.
-fn next(shared: &Shared) -> Option<Cue> {
+/// waiting is skipped.
+fn next(shared: &Shared) -> Next {
     let mut q = lock(&shared.queue);
     loop {
         if q.closed {
-            return None;
+            return Next::Closed;
         }
         if let Some(c) = q.cues.pop_front() {
             let superseded = c.key.is_some() && q.cues.iter().any(|later| later.key == c.key);
             if superseded {
                 continue;
             }
-            return Some(c);
+            return Next::Speak(c);
         }
-        q = shared.wake.wait(q).unwrap_or_else(|p| p.into_inner());
+        let (guard, waited) = shared
+            .wake
+            .wait_timeout(q, IDLE_CHECK)
+            .unwrap_or_else(|p| p.into_inner());
+        q = guard;
+        if waited.timed_out() && q.cues.is_empty() && !q.closed {
+            return Next::Idle;
+        }
     }
 }
 
 fn run(shared: &Shared, reader: &ReaderHandle, engines: Option<&Registry>, serial: &Mutex<()>) {
-    while let Some(cue) = next(shared) {
+    let mut clips = Clips::default();
+    if let Some(engines) = engines {
+        clips.prerender(reader, engines, serial);
+    }
+    loop {
+        let cue = match next(shared) {
+            Next::Speak(cue) => cue,
+            Next::Idle => {
+                if let Some(engines) = engines {
+                    clips.prerender(reader, engines, serial);
+                }
+                continue;
+            }
+            Next::Closed => return,
+        };
         if let Some(engines) = engines {
-            let spoken = if cue.local {
-                hold::local(|| say(reader, engines, serial, &cue.text))
-            } else {
-                say(reader, engines, serial, &cue.text)
-            };
+            let spoken = clips
+                .get(reader, engines, serial, &cue.text, cue.local)
+                .and_then(|(samples, rate)| {
+                    reader
+                        .play_clip(samples.to_vec(), rate)
+                        .map_err(|e| e.to_string())
+                });
             if let Err(e) = spoken {
                 eprintln!("sonarad: cue '{}': {e}", cue.text);
             }
@@ -223,14 +271,68 @@ fn run(shared: &Shared, reader: &ReaderHandle, engines: Option<&Registry>, seria
     }
 }
 
-/// Synthesize `text` in the voice and at the rate in force and play it as
-/// a clip.
-fn say(
-    reader: &ReaderHandle,
-    engines: &Registry,
-    serial: &Mutex<()>,
-    text: &str,
-) -> Result<(), String> {
+/// The engine, voice and rate a clip was rendered in, and whether the
+/// engine was ready (Kokoro still loading speaks with its fallback, whose
+/// clips are rendered again once it is ready).
+type Setting = (String, String, u32, bool);
+
+/// A rendered cue: its samples and their rate.
+type Clip = (Arc<[i16]>, u32);
+
+/// The clips rendered in the setting in force (module docs).
+#[derive(Default)]
+struct Clips {
+    setting: Option<Setting>,
+    /// By text and whether it was spoken locally (#227).
+    clips: HashMap<(String, bool), Clip>,
+}
+
+impl Clips {
+    /// The clip of `text`, rendered now unless it was in this setting.
+    fn get(
+        &mut self,
+        reader: &ReaderHandle,
+        engines: &Registry,
+        serial: &Mutex<()>,
+        text: &str,
+        local: bool,
+    ) -> Result<Clip, String> {
+        let setting = setting(reader, engines)?;
+        if self.setting.as_ref() != Some(&setting) {
+            self.setting = Some(setting.clone());
+            self.clips.clear();
+        }
+        let key = (text.to_string(), local);
+        if let Some(clip) = self.clips.get(&key) {
+            return Ok(clip.clone());
+        }
+        let render = || render(engines, serial, &setting, text);
+        let (samples, rate) = if local {
+            hold::local(render)?
+        } else {
+            render()?
+        };
+        let clip = (Arc::<[i16]>::from(samples), rate);
+        if self.clips.len() >= MAX_CLIPS {
+            self.clips.clear();
+        }
+        self.clips.insert(key, clip.clone());
+        Ok(clip)
+    }
+
+    /// Render the mute cues in the setting in force, unless they are.
+    fn prerender(&mut self, reader: &ReaderHandle, engines: &Registry, serial: &Mutex<()>) {
+        for text in MUTE_CUES {
+            if let Err(e) = self.get(reader, engines, serial, text, true) {
+                eprintln!("sonarad: cue '{text}' ahead of time: {e}");
+                return;
+            }
+        }
+    }
+}
+
+/// The engine, voice and rate in force.
+fn setting(reader: &ReaderHandle, engines: &Registry) -> Result<Setting, String> {
     let engine_id = match reader.get(Key::Engine).map_err(|e| e.to_string())? {
         Value::Text(t) => t,
         _ => return Err("no engine".into()),
@@ -249,18 +351,27 @@ fn say(
         Value::Number(n) => n as u32,
         _ => 200,
     };
+    let ready = engine.status().readiness == sonara_engine::Readiness::Ready;
+    Ok((engine_id, voice, rate, ready))
+}
+
+/// Synthesize `text` in `setting` as one mono clip.
+fn render(
+    engines: &Registry,
+    serial: &Mutex<()>,
+    (engine_id, voice, rate, _): &Setting,
+    text: &str,
+) -> Result<(Vec<i16>, u32), String> {
+    let engine = engines.get(engine_id).map_err(|e| e.to_string())?;
     let chunks = {
         let _one = lock(serial);
         engine
-            .synthesize(text, &voice, rate)
+            .synthesize(text, voice, *rate)
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?
     };
-    let (samples, sample_rate) = mono(&chunks);
-    reader
-        .play_clip(samples, sample_rate)
-        .map_err(|e| e.to_string())
+    Ok(mono(&chunks))
 }
 
 /// The chunks as one mono clip (`play_clip` takes one channel).
@@ -366,6 +477,101 @@ mod tests {
             }
         }
         assert_eq!(got, ["Muted.", "Rate 275."]);
+    }
+
+    /// Cues on a fake engine the test can count.
+    fn counted() -> (ReaderHandle, TestOutput, Arc<FakeEngine>, Cues) {
+        let registry = Registry::default();
+        registry.register(Arc::new(FakeEngine::new())).unwrap();
+        let (out, rx) = TestOutput::new();
+        let reader =
+            ReaderHandle::new(Config::new(registry).with_output(Box::new(out.clone()), rx))
+                .unwrap();
+        let fake = Arc::new(FakeEngine::new());
+        let engines = Registry::default();
+        engines.register(fake.clone()).unwrap();
+        let cues = Cues::new(
+            reader.clone(),
+            Some(Arc::new(engines)),
+            Arc::new(Mutex::new(())),
+            quiet(&reader),
+        );
+        (reader, out, fake, cues)
+    }
+
+    /// Wait until `fake` synthesized every mute cue ahead of time.
+    fn prerendered(fake: &FakeEngine) {
+        let end = Instant::now() + Duration::from_secs(10);
+        while !MUTE_CUES
+            .iter()
+            .all(|c| fake.texts().iter().any(|t| t == c))
+        {
+            assert!(
+                Instant::now() < end,
+                "mute cues not rendered: {:?}",
+                fake.texts()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A mute press was slow (2026-11-12, 1.2 s on Kokoro after a pause):
+    /// its cue was synthesized on every press. The mute cues are rendered
+    /// ahead of time, so a press only plays the clip.
+    #[test]
+    fn a_mute_cue_is_ready_before_the_first_press() {
+        let (_reader, out, fake, cues) = counted();
+        let heard = cues.subscribe();
+        prerendered(&fake);
+        let before = fake.syntheses();
+        cues.speak_local("Unmuted.");
+        assert_eq!(
+            heard.recv_timeout(Duration::from_secs(10)).unwrap(),
+            "Unmuted."
+        );
+        assert_eq!(fake.syntheses(), before, "synthesized again on the press");
+        assert_eq!(clips(&out), 1);
+    }
+
+    #[test]
+    fn a_cue_said_again_is_not_synthesized_again() {
+        let (_reader, out, fake, cues) = counted();
+        let heard = cues.subscribe();
+        prerendered(&fake);
+        let before = fake.syntheses();
+        for _ in 0..3 {
+            cues.speak("Paused.", None);
+            assert_eq!(
+                heard.recv_timeout(Duration::from_secs(10)).unwrap(),
+                "Paused."
+            );
+        }
+        assert_eq!(fake.syntheses(), before + 1);
+        assert_eq!(clips(&out), 3);
+    }
+
+    #[test]
+    fn a_new_rate_renders_the_cue_again_in_it() {
+        let (reader, out, fake, cues) = counted();
+        let heard = cues.subscribe();
+        prerendered(&fake);
+        cues.speak_local("Muted.");
+        heard.recv_timeout(Duration::from_secs(10)).unwrap();
+        let before = fake.syntheses();
+        reader.set(Key::Rate, Value::Number(300)).unwrap();
+        cues.speak_local("Muted.");
+        heard.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(fake.syntheses() > before, "the old rate's clip was played");
+        let sizes: Vec<usize> = out
+            .calls()
+            .iter()
+            .filter_map(|c| match c {
+                OutputCall::PlayClip { samples, .. } => Some(*samples),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sizes.len(), 2);
+        assert_ne!(sizes[0], sizes[1], "a faster rate is a shorter clip");
     }
 
     #[test]
