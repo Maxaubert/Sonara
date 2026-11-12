@@ -3,7 +3,9 @@
 //! on top of each other, which sounds like an error. `Schedule` gives each
 //! earcon a start time: at once when nothing is playing, else `GAP` after
 //! the end of the earcon before it, so they play in the order they were
-//! triggered and never overlap. A burst never plays a long chain: an
+//! triggered and never overlap. An earcon that starts late (a busy
+//! machine wakes its thread late) moves the ones after it and the hold on
+//! the announcement by as much (`started`). A burst never plays a long chain: an
 //! earcon equal to the one scheduled right before it (still waiting or
 //! playing) is dropped, and at most `MAX` earcons wait or play at a time.
 //! Pure: the agent plays what it is told, when.
@@ -25,12 +27,24 @@ pub const FULL: &str = "too many earcons queued";
 /// Why a waiting earcon was not played.
 pub const MUTED: &str = "mute level 2";
 
+/// One earcon waiting or playing.
+#[derive(Debug)]
+struct Slot {
+    earcon: Earcon,
+    /// The start `admit` gave it, which names it (`start_of`, `started`).
+    due: Instant,
+    start: Instant,
+    end: Instant,
+}
+
 /// The earcons waiting or playing, with when each starts and ends.
 #[derive(Debug, Default)]
 pub struct Schedule {
-    slots: VecDeque<(Earcon, Instant, Instant)>,
+    slots: VecDeque<Slot>,
     /// When the last key's sound ends (it plays at once and is not queued).
     key_end: Option<Instant>,
+    /// When the held announcement may start (`hold`).
+    hold: Option<Instant>,
 }
 
 impl Schedule {
@@ -58,27 +72,60 @@ impl Schedule {
         len: Duration,
         now: Instant,
     ) -> Result<Instant, &'static str> {
-        self.slots.retain(|(_, _, end)| *end > now);
+        self.slots.retain(|s| s.end > now);
         let floor = self.floor(now);
-        if let Some((last, _, end)) = self.slots.back() {
-            if *last == e {
-                return Err(DUPLICATE);
-            }
-            if self.slots.len() >= MAX {
-                return Err(FULL);
-            }
-            let start = (*end + GAP).max(floor);
-            self.slots.push_back((e, start, start + len));
-            return Ok(start);
+        let start = match self.slots.back() {
+            Some(last) if last.earcon == e => return Err(DUPLICATE),
+            Some(_) if self.slots.len() >= MAX => return Err(FULL),
+            Some(last) => (last.end + GAP).max(floor),
+            None => floor,
+        };
+        self.slots.push_back(Slot {
+            earcon: e,
+            due: start,
+            start,
+            end: start + len,
+        });
+        Ok(start)
+    }
+
+    /// When the earcon `admit` gave `due` starts now (later when one before
+    /// it started late); `due` when it is no longer scheduled.
+    pub fn start_of(&self, due: Instant) -> Instant {
+        self.slots
+            .iter()
+            .find(|s| s.due == due)
+            .map_or(due, |s| s.start)
+    }
+
+    /// The announcement is held until `until` (the reader's `hold_start`).
+    pub fn hold(&mut self, until: Instant) {
+        self.hold = Some(until);
+    }
+
+    /// The earcon `admit` gave `due` started at `at`. When that is late, it
+    /// and the earcons after it move by as much, and so does a hold still
+    /// in force: its new end is returned, for the reader.
+    pub fn started(&mut self, due: Instant, at: Instant) -> Option<Instant> {
+        let i = self.slots.iter().position(|s| s.due == due)?;
+        let late = at.saturating_duration_since(self.slots[i].start);
+        if late.is_zero() {
+            return None;
         }
-        self.slots.push_back((e, floor, floor + len));
-        Ok(floor)
+        for s in self.slots.iter_mut().skip(i) {
+            s.start += late;
+            s.end += late;
+        }
+        let held = self.hold.filter(|h| *h > at)?;
+        let until = held.max(self.quiet_at(at));
+        self.hold = Some(until);
+        (until > held).then_some(until)
     }
 
     /// Forget the earcons that have not started at `now` (they will not
     /// be played: mute level 2), so the next ones do not wait for them.
     pub fn drop_waiting(&mut self, now: Instant) {
-        self.slots.retain(|(_, start, _)| *start <= now);
+        self.slots.retain(|s| s.start <= now);
     }
 
     /// When the last earcon scheduled has ended and its gap passed (`now`
@@ -87,7 +134,7 @@ impl Schedule {
         let floor = self.floor(now);
         self.slots
             .back()
-            .map_or(floor, |(_, _, end)| (*end + GAP).max(floor))
+            .map_or(floor, |s| (s.end + GAP).max(floor))
     }
 }
 
@@ -112,6 +159,28 @@ mod tests {
         let next = s.admit(Earcon::SessionChange, ms(1000), t + ms(2));
         assert_eq!(next, Ok(t + ms(750) + GAP));
         assert_eq!(s.quiet_at(t), t + ms(750) + GAP + ms(1000) + GAP);
+    }
+
+    #[test]
+    fn an_earcon_that_starts_late_moves_the_ones_after_it_and_the_hold() {
+        let mut s = Schedule::default();
+        let t = Instant::now();
+        s.admit(Earcon::TurnDone, ms(750), t).unwrap();
+        let due = s.admit(Earcon::SessionChange, ms(1000), t + ms(2)).unwrap();
+        let quiet = s.quiet_at(t);
+        s.hold(quiet);
+        // turn_done starts 150 ms late: session_change and the hold follow.
+        assert_eq!(s.started(t, t + ms(150)), Some(quiet + ms(150)));
+        assert_eq!(s.start_of(due), due + ms(150));
+        // session_change then starts on its new time: nothing moves.
+        assert_eq!(s.started(due, due + ms(150)), None);
+        assert_eq!(s.quiet_at(t), quiet + ms(150));
+        // On time, or with no hold in force, there is nothing for the reader.
+        let mut s = Schedule::default();
+        s.admit(Earcon::TurnDone, ms(750), t).unwrap();
+        assert_eq!(s.started(t, t), None);
+        assert_eq!(s.started(t, t + ms(150)), None);
+        assert_eq!(s.quiet_at(t), t + ms(150) + ms(750) + GAP);
     }
 
     #[test]

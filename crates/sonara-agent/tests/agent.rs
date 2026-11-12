@@ -1210,6 +1210,47 @@ fn turn_done_and_session_change_play_one_after_the_other() {
     r.read("From beta.");
 }
 
+/// The macOS CI runner of 2026-11-12 (#321): a chime that starts late, as
+/// on a busy machine whose threads wake late, still ends before the next
+/// chime and before the announcement. The hold used to end when the chime
+/// was due to end, so the voice started under a late chime.
+#[test]
+fn a_chime_that_starts_late_still_ends_before_the_announcement() {
+    let r = Rig::announcing(None);
+    r.out.late_clips(Duration::from_millis(150));
+    let heard = r.agent.subscribe();
+    r.stream("a", "From alpha.", 0, None);
+    r.stream("b", "From beta.", 0, None);
+    r.wait_for("From alpha.");
+    r.out.start();
+    r.agent.turn_end("a", None, None).unwrap();
+    r.out.finish();
+    r.wait_for("Beta.");
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    let clips = timed_clips(&r.out);
+    assert_eq!(clips.len(), 2, "turn_done, then session_change");
+    assert_no_overlap(&clips);
+    let spoken = r
+        .out
+        .timed_calls()
+        .into_iter()
+        .filter(|(_, c)| matches!(c, OutputCall::Play { .. }))
+        .map(|(at, _)| at)
+        .next_back()
+        .unwrap();
+    let (at, samples, rate) = clips[1];
+    assert!(
+        spoken >= at + clip_len(samples, rate),
+        "the announcement started {:?} into the late session_change chime, which lasts {:?}",
+        spoken.saturating_duration_since(at),
+        clip_len(samples, rate)
+    );
+    r.out.start();
+    r.out.finish();
+    r.read("From beta.");
+}
+
 /// A key's sound answers the key at once (#338): pressed while the turn_done
 /// and session_change chimes play (about two seconds), it used to wait
 /// for both. It plays over them; the chimes keep their order.

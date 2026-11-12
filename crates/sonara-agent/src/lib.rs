@@ -424,7 +424,12 @@ impl Agent {
                         Err(err) => eprintln!("[agent] session_change earcon: {err}"),
                     }
                     let now = Instant::now();
-                    let quiet = inner.lock_schedule().quiet_at(now);
+                    let quiet = {
+                        let mut schedule = inner.lock_schedule();
+                        let quiet = schedule.quiet_at(now);
+                        schedule.hold(quiet);
+                        quiet
+                    };
                     if quiet > now {
                         if let Err(err) = inner.channels.reader().hold_start(quiet) {
                             eprintln!("[agent] hold the announcement: {err}");
@@ -1290,6 +1295,7 @@ impl Inner {
             Err(why) => return Ok(Traced::EarconDropped { earcon: e, why }),
         };
         if start <= now && self.deferred.load(Ordering::SeqCst) == 0 {
+            // Played at once, so not late: only the earcon thread wakes late.
             self.sound(e, &clip)?;
             return Ok(Traced::Earcon(e));
         }
@@ -1319,6 +1325,15 @@ impl Inner {
             self.deferred.fetch_sub(1, Ordering::SeqCst);
         }
         Ok(Traced::Earcon(e))
+    }
+
+    /// Hold the announcement until `until`, when a late earcon moved it.
+    fn hold_until(&self, until: Option<Instant>) {
+        if let Some(until) = until {
+            if let Err(err) = self.channels.reader().hold_start(until) {
+                eprintln!("[agent] hold the announcement: {err}");
+            }
+        }
     }
 
     /// Play a clip now and report it to the subscribers.
@@ -1603,14 +1618,28 @@ fn earcon_thread(agent: Weak<Inner>, inbox: Receiver<Deferred>) {
             Some(_) => {}
             None => return,
         }
-        std::thread::sleep(job.start.saturating_duration_since(Instant::now()));
-        let Some(inner) = agent.upgrade() else {
-            return;
+        // Wait for its start, which moves when an earcon before it started
+        // late.
+        let inner = loop {
+            let Some(inner) = agent.upgrade() else {
+                return;
+            };
+            let wait = inner
+                .lock_schedule()
+                .start_of(job.start)
+                .saturating_duration_since(Instant::now());
+            if wait.is_zero() {
+                break inner;
+            }
+            drop(inner);
+            std::thread::sleep(wait);
         };
         if keep(&inner, &job) {
             if let Err(e) = inner.sound(job.earcon, &job.clip) {
                 eprintln!("[agent] {} earcon: {e}", job.earcon.as_str());
             }
+            let held = inner.lock_schedule().started(job.start, Instant::now());
+            inner.hold_until(held);
             inner.deferred.fetch_sub(1, Ordering::SeqCst);
         }
     }
