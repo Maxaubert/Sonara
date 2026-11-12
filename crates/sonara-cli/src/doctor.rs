@@ -100,6 +100,12 @@ pub fn engine_row(status: &Value) -> Row {
     }
 }
 
+/// Said when only Kokoro lists voices: the system's own voices are missing.
+#[cfg(target_os = "macos")]
+const NO_OS_VOICE: &str = " (macOS lists no system voice for Sonara on this Mac; Kokoro only)";
+#[cfg(not(target_os = "macos"))]
+const NO_OS_VOICE: &str = " (Windows lists no OneCore voice for Sonara on this PC; Kokoro only)";
+
 /// The voices row from a `voices` reply: how many each engine lists.
 pub fn voices_row(voices: &Value) -> Row {
     let list = voices.as_array().cloned().unwrap_or_default();
@@ -120,8 +126,8 @@ pub fn voices_row(voices: &Value) -> Row {
         .collect::<Vec<_>>()
         .join(", ");
     let has = |name: &str| counts.iter().any(|(e, _)| e == name);
-    if has("kokoro") && !has("onecore") {
-        detail.push_str(" (Windows lists no OneCore voice for Sonara on this PC; Kokoro only)");
+    if has("kokoro") && !has("onecore") && !has("macos") {
+        detail.push_str(NO_OS_VOICE);
     }
     Row::new(Status::Info, "voices", detail)
 }
@@ -445,6 +451,26 @@ mod tests {
         let r = voices_row(&json!([{"engine": "kokoro"}]));
         assert!(r.detail.contains("Kokoro only"), "{}", r.detail);
         assert_eq!(voices_row(&json!([])).status, Status::Warn);
+    }
+
+    /// On the Mac the doctor said "Windows lists no OneCore voice for
+    /// Sonara on this PC" next to 184 macOS voices (2026-11-12).
+    #[test]
+    fn the_os_voices_of_the_mac_count_as_the_os_voices() {
+        let r = voices_row(&json!([{"engine": "macos"}, {"engine": "kokoro"}]));
+        assert_eq!(
+            (r.status, r.detail.as_str()),
+            (Status::Info, "1 macos, 1 kokoro")
+        );
+        // Kokoro alone names this platform's voices.
+        let r = voices_row(&json!([{"engine": "kokoro"}]));
+        let other = if cfg!(target_os = "macos") {
+            "Windows"
+        } else {
+            "macOS"
+        };
+        assert!(!r.detail.contains(other), "{}", r.detail);
+        assert!(r.detail.contains("Kokoro only"), "{}", r.detail);
     }
 
     #[test]
