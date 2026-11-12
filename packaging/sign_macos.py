@@ -14,7 +14,8 @@ timestamp (``codesign --force --options runtime --timestamp``), and checks
 each with ``codesign --verify --strict``. ``sonarad`` gets the entitlements
 of ``packaging/macos/sonarad.entitlements`` (Apple Events: it pauses Music
 and Spotify through osascript, which the hardened runtime otherwise
-refuses). ``--hardened`` gives an ad-hoc signature the hardened runtime and
+refuses; the Now Playing pause runs Apple's osascript and needs nothing
+signed here). ``--hardened`` gives an ad-hoc signature the hardened runtime and
 those entitlements, so a local test runs the binaries close to how they
 ship; it also turns off library validation for sonarad (an ad-hoc signature
 has no team ID, so libonnxruntime.dylib would be refused), which a release

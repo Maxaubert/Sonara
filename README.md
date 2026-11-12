@@ -98,8 +98,9 @@ progress of the voice download. Offline, the hooks stay silent and try again eve
 `~/Library/Application Support/Sonara/runtime/<version>/`, after checking its SHA-256 and the
 code signature of every program (it must verify and come from an Apple-issued Developer ID;
 the programs are notarized by Apple). The macOS voices speak until
-Kokoro is ready. macOS asks once whether Sonara may control Music or Spotify (to pause them while
-it speaks); ducking other apps is not available on macOS. Details:
+Kokoro is ready. While it speaks Sonara pauses Music, Spotify and the app in Now Playing (a video
+in a browser, Podcasts); macOS asks once whether Sonara may control Music or Spotify. Ducking
+other apps is not available on macOS. Details:
 [Getting started on macOS](docs/user/getting-started.md#on-macos).
 
 **Defaults**

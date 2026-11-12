@@ -260,26 +260,111 @@ pub fn system_voices_for(mac: bool) -> &'static str {
     }
 }
 
+/// What macOS pauses: the scriptable players and the Now Playing app.
+pub const MAC_PAUSED: &str =
+    "Music, Spotify and the Now Playing app (a video in a browser, Podcasts and others)";
+
+/// The Now Playing row (macOS) from the probe's result: whether MediaRemote
+/// can be reached through `osascript`, which pauses the Now Playing app.
+pub fn now_playing_row_for(probe: Result<(), String>) -> Row {
+    match probe {
+        Ok(()) => Row::new(
+            Status::Ok,
+            "now playing",
+            "MediaRemote loads through osascript, so the Now Playing app can be paused \
+             (no permission prompt; this checks it loads, not that macOS answers)",
+        ),
+        Err(e) => Row::new(
+            Status::Warn,
+            "now playing",
+            format!(
+                "unavailable ({e}): only Music and Spotify are paused, \
+                 a video in a browser keeps playing"
+            ),
+        ),
+    }
+}
+
+/// Checks that `/usr/bin/osascript` can load MediaRemote and bind the
+/// command it sends, without reading or sending anything else.
+#[cfg(target_os = "macos")]
+const NOW_PLAYING_PROBE: &str = r#"
+ObjC.import('Foundation');
+(function () {
+  try {
+    var b = $.NSBundle.bundleWithPath('/System/Library/PrivateFrameworks/MediaRemote.framework');
+    if (b.isNil() || !b.load) return 'MediaRemote did not load';
+    if ($.NSClassFromString('MRNowPlayingRequest').isNil()) return 'MRNowPlayingRequest is missing';
+    ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']]);
+    if (typeof $.MRMediaRemoteSendCommand !== 'function') return 'MRMediaRemoteSendCommand is missing';
+    return 'ok';
+  } catch (e) { return String(e); }
+})();
+"#;
+
+/// The Now Playing row, probed now (at most 3 s).
+#[cfg(target_os = "macos")]
+pub fn now_playing_row() -> Row {
+    now_playing_row_for(probe_now_playing(std::time::Duration::from_secs(3)))
+}
+
+#[cfg(target_os = "macos")]
+fn probe_now_playing(limit: std::time::Duration) -> Result<(), String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("/usr/bin/osascript")
+        .args(["-l", "JavaScript", "-e", NOW_PLAYING_PROBE])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("cannot run osascript: {e}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("osascript timed out".into());
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(e) => return Err(format!("osascript: {e}")),
+        }
+    }
+    let mut out = String::new();
+    if let Some(mut o) = child.stdout.take() {
+        let _ = o.read_to_string(&mut out);
+    }
+    match out.trim() {
+        "ok" => Ok(()),
+        "" => Err("osascript failed".into()),
+        why => Err(why.to_string()),
+    }
+}
+
 /// The audio row from `audio_mode` and `duck_level`.
 pub fn audio_row(mode: &Value, level: &Value) -> Row {
     audio_row_for(mode, level, cfg!(target_os = "macos"))
 }
 
-/// `audio_row` as on macOS (`mac`: no duck, and pause reaches only the
-/// scriptable players) or Windows.
+/// `audio_row` as on macOS (`mac`: no duck, and pause reaches the
+/// scriptable players and the Now Playing app) or Windows.
 pub fn audio_row_for(mode: &Value, level: &Value, mac: bool) -> Row {
     if mac {
         return match mode.as_str() {
             Some("duck") => Row::new(
                 Status::Warn,
                 "audio",
-                "ducking is not available on macOS: Music and Spotify are paused instead \
-                 (choose Pause or Off in the settings page)",
+                format!(
+                    "ducking is not available on macOS: {MAC_PAUSED} are paused instead \
+                     (choose Pause or Off in the settings page)"
+                ),
             ),
             Some("pause") => Row::new(
                 Status::Info,
                 "audio",
-                "Music and Spotify are paused while Sonara speaks (other media is left alone)",
+                format!("{MAC_PAUSED} are paused while Sonara speaks"),
             ),
             _ => audio_row_for(mode, level, false),
         };
@@ -452,11 +537,35 @@ mod tests {
         assert_eq!(r.status, Status::Warn);
         assert!(r.detail.contains("not available on macOS"), "{}", r.detail);
         let r = audio_row_for(&json!("pause"), &json!(30), true);
-        assert!(r.detail.contains("Music and Spotify"), "{}", r.detail);
+        assert!(
+            r.detail.contains("Music, Spotify and the Now Playing app"),
+            "{}",
+            r.detail
+        );
         assert_eq!(
             audio_row_for(&json!("off"), &json!(30), true).status,
             Status::Info
         );
+    }
+
+    #[test]
+    fn the_now_playing_row_says_what_is_paused_when_it_is_unavailable() {
+        let r = now_playing_row_for(Ok(()));
+        assert_eq!(r.status, Status::Ok);
+        let r = now_playing_row_for(Err("MediaRemote did not load".into()));
+        assert_eq!(r.status, Status::Warn);
+        assert!(r.detail.contains("did not load"), "{}", r.detail);
+        assert!(r.detail.contains("only Music and Spotify"), "{}", r.detail);
+    }
+
+    /// Read only: loads MediaRemote and binds the function, sends nothing.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_now_playing_probe_answers_within_its_limit() {
+        let started = std::time::Instant::now();
+        let r = now_playing_row();
+        println!("{r}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

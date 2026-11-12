@@ -16,7 +16,8 @@
 //!   restored, and why) a host writes to its support log.
 //!
 //! Everything OS-facing goes through [`platform::Platform`] (`win` on
-//! Windows, `mac` on macOS: Carbon hotkeys, AppleScript pause, no duck);
+//! Windows, `mac` on macOS: Carbon hotkeys, AppleScript and Now Playing
+//! pause, no duck);
 //! tests use [`fake::Fake`]. L4 builds only on the L1 facade (R7, `sonara-core/tests/layering.rs`).
 pub mod audio;
 pub mod ducking;
@@ -26,6 +27,8 @@ pub mod keymap;
 pub mod log;
 #[cfg(target_os = "macos")]
 pub mod mac;
+#[cfg(target_os = "macos")]
+pub mod mac_nowplaying;
 pub mod pausing;
 pub mod platform;
 pub mod state_file;

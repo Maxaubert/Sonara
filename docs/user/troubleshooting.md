@@ -39,6 +39,7 @@ Rows appear in this order. Rows from `engine` to `mute level` appear only while 
 | `hotkeys` | INFO | The keys, plus `(not registered now)` | Hotkeys are off until a Claude Code session is connected. Start or restart a session |
 | `hotkeys` | WARN | One or more problems, separated by `;`: taken by another program, also bound to another action, types a character with AltGr, an Intel screen-rotation note, or a `keymap.json` problem | See [hotkeys](#hotkeys-do-not-work-or-clash) |
 | `audio` | INFO | What happens to other apps: paused, lowered to N %, or left alone | Change it on the Audio page (Other apps: Off, Duck, Pause) |
+| `now playing` | OK / WARN | macOS, with Pause or Duck: whether macOS still lets Sonara reach Now Playing (a video in a browser). OK means the system part loads; it cannot prove macOS still answers. WARN says why not; then only Music and Spotify are paused | Nothing to set. A WARN, or an OK while a video in a browser keeps playing after a macOS update, means Apple closed the way in: [report a bug](#report-a-bug) |
 | `summaries` | INFO | `on (<style>, <model>)` or `off: replies are read as they are` | See [Spoken summaries](summaries.md) |
 | `mute level` | INFO | `0` unmuted, `1` muted (speech), `2` super muted (speech and chimes) | If you hear nothing and it is not 0, press Ctrl+Alt+M until it is |
 | `hooks` | OK | The plugin's hook file is found and matches the runtime | Nothing |

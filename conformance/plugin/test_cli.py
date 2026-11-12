@@ -44,12 +44,13 @@ def test_doctor_reports_rows_and_never_fails_on_information(box, cli):
     assert "[ OK ] engine: fake, ready" in text
     assert "250 words per minute" in text, "the product default rate"
     # The product default audio mode (pause), and the default hotkeys: on
-    # macOS the scriptable players only, and Ctrl+Option.
+    # macOS the scriptable players and the Now Playing app, and Ctrl+Option.
     if ph.WINDOWS:
         assert "[INFO] audio: media apps are paused" in text
         assert re.search(r"\[ OK \] hotkeys: Ctrl\+Alt\+Up restart", text)
     else:
-        assert "[INFO] audio: Music and Spotify are paused" in text
+        assert "[INFO] audio: Music, Spotify and the Now Playing app" in text
+        assert "now playing:" in text
         assert re.search(r"\[ OK \] hotkeys: Ctrl\+Option\+Up restart", text)
         assert "VoiceOver" in text
     assert "[ OK ] hooks:" in text, "run from the plugin (CLAUDE_PLUGIN_ROOT)"

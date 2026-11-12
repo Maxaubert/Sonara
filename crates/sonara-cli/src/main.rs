@@ -457,6 +457,11 @@ fn doctor(paths: &Paths) -> ExitCode {
         }
         if let (Some(m), Some(l)) = (c.get("audio_mode"), c.get("duck_level")) {
             rows.push(doctor::audio_row(&m, &l));
+            // What pauses the Now Playing app (a video in a browser).
+            #[cfg(target_os = "macos")]
+            if matches!(m.as_str(), Some("pause" | "duck")) {
+                rows.push(doctor::now_playing_row());
+            }
         }
         if let Some(s) = c.get("summaries") {
             let on = s["enabled"] == true;
