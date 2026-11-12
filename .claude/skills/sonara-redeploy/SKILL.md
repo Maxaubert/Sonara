@@ -39,6 +39,21 @@ done
 "$R/sonara.exe" start    # clears stopped
 ```
 
+### macOS (2026-11-12)
+
+The folder is `~/Library/Application Support/Sonara/runtime/<ver>/`, the files have no `.exe`, and
+the binaries must be signed (`python3 packaging/sign_macos.py sign target/release --identity
+"Developer ID Application: ..."`, `--identity -` for ad-hoc). Never `cp` over a signed binary in
+place: the kernel keeps the old signature cached and the new file is SIGKILLed at launch. Copy
+beside it, then rename over it:
+
+```sh
+R="$HOME/Library/Application Support/Sonara/runtime/<ver>"
+"$R/sonara" stop
+for f in sonarad sonara-hook sonara; do cp target/release/$f "$R/.$f.new" && mv -f "$R/.$f.new" "$R/$f"; done
+"$R/sonara" start
+```
+
 ## 2b. New version folder (the branch bumped the version, the usual case)
 
 The installed plugin picks the newer folder up at the next hook, so no plugin change is needed.
