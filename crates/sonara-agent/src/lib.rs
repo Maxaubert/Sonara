@@ -1295,10 +1295,8 @@ impl Inner {
             Err(why) => return Ok(Traced::EarconDropped { earcon: e, why }),
         };
         if start <= now && self.deferred.load(Ordering::SeqCst) == 0 {
+            // Played at once, so not late: only the earcon thread wakes late.
             self.sound(e, &clip)?;
-            let held = schedule.started(start, Instant::now());
-            drop(schedule);
-            self.hold_until(held);
             return Ok(Traced::Earcon(e));
         }
         let mut player = self.player.lock().unwrap_or_else(|p| p.into_inner());
