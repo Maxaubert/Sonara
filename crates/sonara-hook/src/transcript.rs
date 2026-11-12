@@ -552,13 +552,21 @@ And a second part."
         let lead = lead_in(&path, "t1", deadline);
         writer.join().unwrap();
         assert_eq!(lead.as_deref(), Some("Ten files, not eleven."));
-        // Never written: it gives up at the deadline.
+        // Never written: it looks until the deadline, then gives up. The
+        // bound past the deadline is wide: a busy CI runner (macOS,
+        // 2026-11-12, #321) wakes a sleeping thread late, and only a hang
+        // matters here.
         let start = Instant::now();
         assert_eq!(
             lead_in(&path, "t9", start + Duration::from_millis(300)),
             None
         );
-        assert!(start.elapsed() < Duration::from_millis(300) + POLL);
+        let took = start.elapsed();
+        assert!(
+            took >= Duration::from_millis(300) - POLL,
+            "gave up early: {took:?}"
+        );
+        assert!(took < Duration::from_secs(2), "did not give up: {took:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
