@@ -283,6 +283,7 @@ impl G2P {
         }
         settle_content(&mut tokens);
         settle_live(&mut tokens);
+        settle_read(&mut tokens);
 
         // Process in reverse to build context from future tokens
         for i in (0..tokens.len()).rev() {
@@ -658,6 +659,137 @@ fn settle_live(tokens: &mut [MToken]) {
         if verb {
             tokens[i].tag = "VB".to_string();
         }
+    }
+}
+
+/// Words earlier in the clause that make "read" the present ("reed"): a
+/// modal, "to", "let", "do".
+const READ_PRESENT_CUES: &[&str] = &[
+    "will",
+    "would",
+    "should",
+    "shall",
+    "can",
+    "could",
+    "may",
+    "might",
+    "must",
+    "to",
+    "let",
+    "let's",
+    "do",
+    "does",
+    "did",
+    "don't",
+    "doesn't",
+    "didn't",
+    "can't",
+    "won't",
+    "couldn't",
+    "wouldn't",
+    "shouldn't",
+    "please",
+];
+
+/// Words earlier in the clause that make "read" the past ("red"): a form of
+/// "have" or "be" ("I have read", "it is read", "can be read").
+const READ_PAST_CUES: &[&str] = &[
+    "have", "has", "had", "having", "i've", "we've", "you've", "they've", "is", "are", "was",
+    "were", "be", "been", "being", "it's", "get", "gets", "got",
+];
+
+/// Words right after "read" that make it the noun or adjective "reed"
+/// ("read access", "read-only").
+const READ_NOUN_NEXT: &[&str] = &[
+    "only",
+    "access",
+    "accesses",
+    "permission",
+    "permissions",
+    "lock",
+    "locks",
+    "mode",
+    "error",
+    "errors",
+    "speed",
+    "speeds",
+    "time",
+    "times",
+    "receipt",
+    "receipts",
+    "rate",
+    "replica",
+    "replicas",
+    "scope",
+    "scopes",
+    "path",
+    "side",
+    "operation",
+    "operations",
+    "request",
+    "requests",
+    "call",
+    "calls",
+    "model",
+    "query",
+    "queries",
+    "write",
+];
+
+/// Subjects that make a bare "read" the past: "I read the file" (what
+/// Claude writes after it did something), "it read" ("it reads" is the
+/// present).
+const READ_PAST_SUBJECTS: &[&str] = &["i", "we", "he", "she", "it", "they", "claude"];
+
+/// The tagger guesses "read" from the words around it and got clear cases
+/// wrong (owner's report 2026-11-14): "I'll read it" and "read-only" were
+/// said "red", "I just read the config" "reed". The nearest cue earlier in
+/// the clause decides (a modal or "to": present; "have" or "be": past),
+/// then the word after it ("read access"), then a subject right before it
+/// (adverbs skipped): "I read" is the past. Otherwise the tagger stays.
+fn settle_read(tokens: &mut [MToken]) {
+    let lower = |t: &MToken| t.text.to_lowercase().replace('\u{2019}', "'");
+    for i in 0..tokens.len() {
+        if lower(&tokens[i]) != "read" {
+            continue;
+        }
+        let next = tokens.get(i + 1).map(lower);
+        let next2 = tokens.get(i + 2).map(lower);
+        let hyphen_only = next.as_deref() == Some("-")
+            && matches!(next2.as_deref(), Some("only" | "write" | "ahead"));
+        let noun_next = hyphen_only || next.as_deref().is_some_and(|n| READ_NOUN_NEXT.contains(&n));
+        let mut cue = None;
+        for t in tokens[..i].iter().rev() {
+            let w = lower(t);
+            if w.chars().all(|c| c.is_ascii_punctuation()) {
+                break;
+            }
+            if READ_PRESENT_CUES.contains(&w.as_str()) || w.ends_with("'ll") {
+                cue = Some("VB");
+                break;
+            }
+            if READ_PAST_CUES.contains(&w.as_str()) {
+                cue = Some("VBN");
+                break;
+            }
+        }
+        // "the read failed", "a read": the noun.
+        let article = i > 0 && matches!(lower(&tokens[i - 1]).as_str(), "a" | "an" | "the");
+        let subject = tokens[..i]
+            .iter()
+            .rev()
+            .find(|t| !t.tag.starts_with("RB"))
+            .is_some_and(|t| READ_PAST_SUBJECTS.contains(&lower(t).as_str()));
+        let tag = if noun_next || article {
+            "VB"
+        } else if let Some(c) = cue {
+            c
+        } else if subject {
+            "VBD"
+        } else {
+            continue;
+        };
+        tokens[i].tag = tag.to_string();
     }
 }
 

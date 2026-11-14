@@ -34,6 +34,37 @@ fn read_is_said_red_in_the_past_and_reed_otherwise() {
 }
 
 #[test]
+fn read_follows_the_cue_before_it_then_the_subject() {
+    // Owner's report 2026-11-14: "I'll read it" and "read-only" were said
+    // "red", "I just read the config" "reed".
+    let g2p = G2P::new(Language::EnglishUS);
+    for past in [
+        "I just read the config.",
+        "I read the file and fixed it.",
+        "I already read that.",
+        "Then I read the logs.",
+        "I've read the docs.",
+        "It can be read by anyone.",
+    ] {
+        let ps = phonemes(&g2p, past);
+        assert!(ps.contains("ɹˈɛd"), "{past}: {ps}");
+    }
+    for present in [
+        "I'll read the file.",
+        "Let me read the file.",
+        "I need to read the file.",
+        "Did you read it?",
+        "You can read it here.",
+        "It was read-only.",
+        "Read access is denied.",
+        "The read failed.",
+    ] {
+        let ps = phonemes(&g2p, present);
+        assert!(ps.contains("ɹˈid"), "{present}: {ps}");
+    }
+}
+
+#[test]
 fn other_heteronyms_follow_their_part_of_speech() {
     let g2p = G2P::new(Language::EnglishUS);
     // (sentence, a pronunciation it must contain)
