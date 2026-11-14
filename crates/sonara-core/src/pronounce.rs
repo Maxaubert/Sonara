@@ -406,7 +406,7 @@ static TECH: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
         ("id", "I D"),
         ("ids", "I Ds"),
         ("url", "U R L"),
-        ("urls", "U R Ls"),
+        ("urls", "U R L's"),
         ("uri", "U R I"),
         ("cli", "C L I"),
         ("ui", "U I"),

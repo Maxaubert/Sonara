@@ -28,6 +28,12 @@ pub const CUSTOM_LEXICON: &[(&str, &str)] = &[
     ("enum", "ˈinəm"),
     ("onecore", "wˈʌnkˌɔɹ"),
     ("toml", "tˈɑməl"),
+    // Owner's report 2026-11-14: `url` in code and "Url" were said "earl",
+    // `async` "uh-sink", and the prose rules' "ay sink" "eye sink".
+    ("url", "jˌuˌɑɹˈɛl"),
+    ("urls", "jˌuˌɑɹˈɛlz"),
+    ("async", "ˈAsɪŋk"),
+    ("ay", "ˈA"),
 ];
 
 /// misaki-rs writes diphthongs and affricates with a zero-width joiner;
@@ -241,6 +247,36 @@ pub(crate) fn batches_of(ps: &str, max: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_is_spelled_and_async_starts_like_ace_in_any_case() {
+        // Owner's report 2026-11-14: "url" was said "earl", "async"
+        // "uh-sink" and the prose rules' "ay sink" "eye sink".
+        let p = Phonemizer::new();
+        for text in [
+            "Check the url field.",
+            "Url parsing failed.",
+            "The URL is wrong.",
+        ] {
+            assert!(
+                p.phonemize(text).contains("jˌuˌɑɹˈɛl"),
+                "{text}: {}",
+                p.phonemize(text)
+            );
+        }
+        assert!(p.phonemize("Two urls.").contains("jˌuˌɑɹˈɛlz"));
+        for text in ["The async keyword.", "Async code.", "It is ay sink now."] {
+            let ps = p.phonemize(text);
+            assert!(
+                ps.contains("ˈAs") || ps.contains("ˈA sˈɪŋk"),
+                "{text}: {ps}"
+            );
+            assert!(
+                !ps.contains("ɐsˈɪŋk") && !ps.contains("ˈI sˈɪŋk"),
+                "{text}: {ps}"
+            );
+        }
+    }
 
     #[test]
     fn joined_symbols_become_kokoro_symbols() {
