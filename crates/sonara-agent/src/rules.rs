@@ -87,8 +87,11 @@
 //!   open when it came, is held while its text so far is inside a lead-in
 //!   the lead-in path read, and judged when it ends (`final`, the next
 //!   block) or at a decision, a tool or the turn end: a repeat is dropped,
-//!   anything else is read in full. A new turn (`turn_start`, or a woken
-//!   one, `take_new_turn`) forgets all of it.
+//!   anything else is read in full. A `turn_start` forgets all of it. A
+//!   turn that wakes without one (`take_new_turn`, #243) keeps it: its
+//!   text and lead-in reach the runtime before the tool or question that
+//!   starts it, so forgetting there would read them again. Its lead-in
+//!   is dropped, then, when the last reply read the same text.
 //! - **Question sets** (#283): an `ask` carrying `set` (index, size) with a
 //!   size of two or more is one question of a set (Claude Code shows them
 //!   one at a time). Only the first is spoken, as "Question 1 of N." with
@@ -574,9 +577,9 @@ fn read_already(said: &[String], all: &str, part: &str) -> bool {
 /// `said` (the first deltas of a block whose last ones come after the
 /// lead-in, #286): the length in folded characters of the longest such
 /// block. A block shorter than `ECHO_MIN` counts only when it is the last
-/// one taken.
-fn said_prefix(said: &[String], part: &str) -> Option<usize> {
-    let last = said.len().checked_sub(1);
+/// one taken and still `open`.
+fn said_prefix(said: &[String], open: bool, part: &str) -> Option<usize> {
+    let last = said.len().checked_sub(1).filter(|_| open);
     said.iter()
         .enumerate()
         .filter(|(i, s)| {
@@ -722,6 +725,9 @@ struct Turn {
     /// How many of `said` were spoken (nothing held after them): dropping
     /// the held prose forgets the entries after it, never spoken.
     said_mark: usize,
+    /// The last of `said` is a block still open (its last delta was not
+    /// final).
+    said_open: bool,
     /// The questions applied this turn, by tool use and place in the set:
     /// the same one again is dropped.
     asked: Vec<(String, usize)>,
@@ -788,6 +794,7 @@ impl Turn {
             echo: Echo::default(),
             said: Vec::new(),
             said_mark: 0,
+            said_open: false,
             asked: Vec::new(),
             lead_in_wait: None,
             reply: None,
@@ -1002,6 +1009,7 @@ impl Rules {
             // Never spoken: a lead-in with the same text is read.
             let mark = c.said_mark;
             c.said.truncate(mark);
+            c.said_open = false;
         }
         if echo > 0 {
             self.note(
@@ -1163,7 +1171,13 @@ impl Rules {
                 // that repeats it is read in its place. So is the end of
                 // the open block the assembler holds.
                 self.drop_held(channel, "text before the question");
-                self.turn(channel).assembler = ProseAssembler::new();
+                let c = self.turn(channel);
+                c.assembler = ProseAssembler::new();
+                // Nothing after the last flush was spoken, held prose or
+                // not (the end of the block was in the assembler).
+                let mark = c.said_mark;
+                c.said.truncate(mark);
+                c.said_open = false;
             }
             match self.unread(channel, delta) {
                 None => {
@@ -1221,6 +1235,7 @@ impl Rules {
     /// part was read.
     fn unread(&self, channel: &str, delta: &str) -> Option<String> {
         let said: &[String] = self.turns.get(channel).map_or(&[], |c| &c.said);
+        let open = self.turns.get(channel).is_some_and(|c| c.said_open);
         let all = said.concat();
         let parts = paragraphs(delta);
         // Per part: `None` without letters or digits, else what to read
@@ -1235,7 +1250,7 @@ impl Rules {
                     Some(None)
                 } else {
                     Some(Some(
-                        said_prefix(said, &f).map_or(p.as_str(), |n| rest_after(p, n)),
+                        said_prefix(said, open, &f).map_or(p.as_str(), |n| rest_after(p, n)),
                     ))
                 }
             })
@@ -1612,6 +1627,7 @@ impl Rules {
                 _ if delta.is_empty() => {}
                 _ => c.said.push(folded),
             }
+            c.said_open = !is_final;
             for ch in c.assembler.feed(&delta, index, is_final) {
                 match ch {
                     Chunk::Text(t) => {
@@ -1748,6 +1764,7 @@ impl Rules {
         let c = self.turn(channel);
         c.said.clear();
         c.said_mark = 0;
+        c.said_open = false;
         c.asked.clear();
         let c = self.turn(channel);
         c.released = false;
@@ -2273,13 +2290,9 @@ impl Rules {
                 c.last_index = None;
                 c.reply = None;
                 c.replied = None;
-                // What the last reply read and asked (module docs,
-                // "Lead-in once"): the new reply starts without it.
-                c.lead_in.clear();
-                c.echo = Echo::default();
-                c.said.clear();
-                c.said_mark = 0;
-                c.asked.clear();
+                // What the turn read and asked stays (module docs, "Lead-in
+                // once"): the woken turn's text and lead-in came before
+                // the tool or question that starts it here.
                 true
             }
             _ => false,

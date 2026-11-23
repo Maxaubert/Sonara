@@ -2998,38 +2998,70 @@ fn a_lead_in_after_a_block_cut_mid_sentence_is_read_once() {
 
 #[test]
 fn read_mode_final_a_lead_in_after_the_first_deltas_is_read_once() {
-    // The held text is dropped for the lead-in, the open block's tail too.
-    let mut r = mode_rules(ReadMode::Final);
-    let a = prose(&mut r, "fg", "Here is the first sentence. And a", 0, false);
-    let b = r.lead_in("fg", None, OPEN, None).unwrap();
-    let c = r.ask("fg", &question("Which one?", &["A", "B"]));
-    let d = prose(&mut r, "fg", " second.", 1, true);
-    let e = r.turn_end("fg", None, None).unwrap();
-    assert_eq!(prose_said(&[a, b, c, d, e]), OPEN);
+    // The held text is dropped for the lead-in, the open block's tail too,
+    // also when no sentence of the block was finished yet.
+    for (first, rest) in [
+        ("Here is the first sentence. And a", " second."),
+        ("Here is the first ", "sentence. And a second."),
+        (OPEN, ""),
+    ] {
+        let mut r = mode_rules(ReadMode::Final);
+        let a = prose(&mut r, "fg", first, 0, false);
+        let b = r.lead_in("fg", None, OPEN, None).unwrap();
+        let c = r.ask("fg", &question("Which one?", &["A", "B"]));
+        let all = all_spoken(&[a.clone(), b.clone(), c.clone()]);
+        assert_eq!(
+            all.last().map(String::as_str),
+            Some("!Which one? Option 1: A. Option 2: B."),
+            "{first:?}: {all:?}"
+        );
+        let d = prose(&mut r, "fg", rest, 1, true);
+        let e = r.turn_end("fg", None, None).unwrap();
+        assert_eq!(prose_said(&[a, b, c, d, e]), OPEN, "{first:?}");
+    }
 }
 
 #[test]
-fn a_woken_turn_reads_a_lead_in_the_last_turn_said() {
-    // #243: a turn that starts without a turn_start forgets the last
-    // reply's text, as turn_start does.
+fn a_lead_in_after_a_short_ended_block_it_starts_with_is_read_whole() {
+    // Only a block still open counts as the start of a lead-in when it is
+    // short: an ended "Let me check." is no part of a longer lead-in.
     let mut r = rules();
-    let a = prose(&mut r, "fg", LEAD, 0, true);
-    r.turn_end("fg", None, None).unwrap();
-    assert!(r.take_new_turn("fg"));
-    let b = r.lead_in("fg", None, LEAD, None).unwrap();
-    assert_eq!(all_spoken(&[a, b]), [LEAD, LEAD]);
+    let a = prose(&mut r, "fg", "Let me check.", 0, true);
+    let b = r
+        .lead_in("fg", None, "Let me check the options first.", None)
+        .unwrap();
+    assert_eq!(
+        all_spoken(&[a, b]),
+        ["Let me check.", "Let me check the options first."]
+    );
 }
 
 #[test]
-fn a_woken_turn_forgets_the_last_turn_s_questions() {
-    let mut r = rules();
-    let q = with_id(question("Which one?", &["A", "B"]), "toolu_1");
-    r.ask("fg", &q);
-    r.answered("fg");
-    r.turn_end("fg", None, None).unwrap();
-    assert!(r.repeated_ask("fg", &q), "the same turn still knows it");
-    assert!(r.take_new_turn("fg"));
-    assert!(!r.repeated_ask("fg", &q));
+fn a_woken_turn_s_lead_in_is_read_once() {
+    // #243: a turn that wakes without a turn_start starts at its tool or
+    // question (the driver calls take_new_turn there), after its text and
+    // lead-in came: they are not read again.
+    for streamed_first in [true, false] {
+        let mut r = rules();
+        prose(&mut r, "fg", "The last reply. ", 0, true);
+        r.turn_end("fg", None, None).unwrap();
+        let mut said = Vec::new();
+        if streamed_first {
+            said.push(prose(&mut r, "fg", LEAD, 0, true));
+        }
+        said.push(r.lead_in("fg", None, LEAD, None).unwrap());
+        assert!(r.take_new_turn("fg"));
+        said.push(r.ask("fg", &question("Which one?", &["A", "B"])));
+        if !streamed_first {
+            // MessageDisplay after the question.
+            said.push(prose(&mut r, "fg", LEAD, 0, true));
+        }
+        assert_eq!(
+            all_spoken(&said),
+            [LEAD, "!Which one? Option 1: A. Option 2: B."],
+            "streamed first {streamed_first}"
+        );
+    }
 }
 
 #[test]
