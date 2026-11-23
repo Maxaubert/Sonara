@@ -833,3 +833,62 @@ fn a_daily_quota_is_not_retried_at_once_and_waits_past_the_reset() {
     assert_eq!(r.server.count(SPEAK), 1, "a quota is not retried at once");
     assert_eq!(r.engine.status().reason, Some(Reason::Quota));
 }
+
+#[test]
+fn model_pages_are_followed_and_repeated_ids_dropped() {
+    let r = rig();
+    r.server.queue(
+        "/v1beta/models",
+        Route::json(
+            200,
+            r#"{"models": [{"name": "models/tts-a", "supportedGenerationMethods": ["generateContent"]}],
+                "nextPageToken": "p2"}"#,
+        ),
+    );
+    r.server.queue(
+        "/v1beta/models",
+        Route::json(
+            200,
+            r#"{"models": [{"name": "models/tts-a", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/tts-b", "supportedGenerationMethods": ["generateContent"]}]}"#,
+        ),
+    );
+    let models = r.engine.refresh_models().unwrap();
+    let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["tts-a", "tts-b"]);
+    let reqs = r.server.requests();
+    assert_eq!(reqs.len(), 2);
+    assert!(reqs[1].path.contains("pageToken=p2"), "{}", reqs[1].path);
+}
+
+#[test]
+fn a_mute_during_a_paged_model_list_stops_the_pages() {
+    let hold = Arc::new(Hold::new());
+    let r = rig_with(gemini(), Some(KEY), true, Some(hold.clone()));
+    let page1 = r#"{"models": [{"name": "models/tts-b", "supportedGenerationMethods": ["generateContent"]}],
+        "nextPageToken": "p2"}"#;
+    r.server.queue(
+        "/v1beta/models",
+        Route::json(200, page1).delayed(Duration::from_millis(400)),
+    );
+    r.server.queue(
+        "/v1beta/models",
+        Route::json(
+            200,
+            r#"{"models": [{"name": "models/tts-c", "supportedGenerationMethods": ["generateContent"]}]}"#,
+        ),
+    );
+    let h = hold.clone();
+    let raiser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        h.set(true);
+    });
+    let listed = r.engine.refresh_models().unwrap();
+    raiser.join().unwrap();
+    assert_eq!(r.server.requests().len(), 1, "no page after the mute");
+    assert!(
+        listed.iter().all(|m| m.id != "tts-c" && m.id != "tts-b"),
+        "{listed:?}"
+    );
+    assert!(r.engine.models_stale(), "a cut list is not kept as fresh");
+}
