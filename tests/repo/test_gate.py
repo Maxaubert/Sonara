@@ -127,7 +127,8 @@ def _labels(gate_name):
     return [step[0] for step in gate.steps_for(gate_name, None, False)]
 
 
-def test_the_sdk_gate_runs_every_step_of_the_ci_clients_job():
+def test_the_sdk_gate_runs_every_step_of_the_ci_clients_job(monkeypatch):
+    monkeypatch.setattr(gate, "_on_windows", lambda: True)
     labels = _labels("sdk")
     for want in ("stage runtime DLLs", "examples/player-demo: npm ci", "examples/player-demo: build",
                  "Python smoke host", "packages: build, check, publish dry run"):
@@ -135,6 +136,25 @@ def test_the_sdk_gate_runs_every_step_of_the_ci_clients_job():
     assert labels.index("stage runtime DLLs") < labels.index("npm-runtime: build")
     host = next(s for s in gate.steps_for("sdk", None, False) if s[0] == "Python smoke host")
     assert Path(host[3]["SONARA_RUNTIME"]).name == "sonarad" + gate.EXE
+
+
+def test_the_sdk_gate_skips_the_windows_only_steps_on_macos(monkeypatch):
+    monkeypatch.setattr(gate, "_on_windows", lambda: False)
+    labels = _labels("sdk")
+    assert not [x for x in labels if "npm-runtime" in x or x.startswith("packages:")]
+    assert "Node smoke host" not in labels
+    for want in ("clients/ts: test", "clients/player: test", "examples/player-demo: build",
+                 "clients/python tests", "Python smoke host"):
+        assert want in labels, want
+
+
+def test_the_sdk_gate_keeps_every_step_on_windows(monkeypatch):
+    monkeypatch.setattr(gate, "_on_windows", lambda: True)
+    labels = _labels("sdk")
+    for want in ("npm-runtime: build", "npm-runtime: test", "Node smoke host",
+                 "packages: build, check, publish dry run"):
+        assert want in labels, want
+    assert labels.index("npm-runtime: build") < labels.index("Node smoke host") < labels.index("Python smoke host")
 
 
 def test_the_sdk_triggers_cover_the_player_demo_and_the_python_host():
