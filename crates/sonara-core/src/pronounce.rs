@@ -790,7 +790,7 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
             r"(?:[A-Za-z]:\\|~[\\/]|\.{1,2}[\\/]|/)?(?:[\p{L}\p{N}_.@-]+[\\/])*[\p{L}\p{N}_@-][\p{L}\p{N}_.@-]*\.[A-Za-z][A-Za-z0-9]{0,6}(?::\d+(?::\d+)?)?",
         ),
         iso: re(
-            r"(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?",
+            r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:T([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?(Z|[+-][0-9]{2}:?[0-9]{2})?)?",
         ),
         ip_port: re(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})"),
         ip: re(r"(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})"),
@@ -938,7 +938,7 @@ pub fn pronounce(text: &str) -> String {
                 Some(z) => {
                     let digits = z[1..].replace(':', "");
                     let (oh, om): (u64, u64) =
-                        (digits[..2].parse().ok()?, digits[2..].parse().ok()?);
+                        (digits.get(..2)?.parse().ok()?, digits.get(2..)?.parse().ok()?);
                     w.push_str(" U T C");
                     if (oh, om) != (0, 0) {
                         let sign = if z.starts_with('-') { "minus" } else { "plus" };
@@ -2273,6 +2273,17 @@ mod tests {
 
     /// The user's words are process-wide: one test at a time sets them.
     static WORDS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn an_iso_zone_with_non_ascii_digits_does_not_panic() {
+        let _one = WORDS.lock().unwrap_or_else(|e| e.into_inner());
+        set_user_words(Vec::new());
+        let out = pronounce("2026-01-02T10:30+\u{0966}\u{096b}:\u{0969}\u{0966}");
+        assert!(!out.is_empty());
+        assert!(pronounce("2026-01-02T10:30+05:30").ends_with("U T C plus five thirty"));
+        assert!(pronounce("2026-01-02T10:30-05:00").ends_with("U T C minus five"));
+        assert!(pronounce("2026-01-02T10:30Z").ends_with("U T C"));
+    }
 
     #[test]
     fn the_users_words_come_first_and_are_read_as_written() {
