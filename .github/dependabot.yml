@@ -44,12 +44,14 @@ updates:
     commit-message:
       prefix: deps(npm)
 
-  # The Python SDK has no runtime dependencies today (spec R6); this covers
-  # its build requirements and any that get added. The root pyproject.toml
-  # holds only [dependency-groups] (the dev tools), which Dependabot's pip
-  # support is not known to read, so / is not listed.
+  # / : the root pyproject.toml, whose [dependency-groups] hold the dev
+  # tools (PEP 735, read by Dependabot's pip support since 2025).
+  # /clients/python: the Python SDK has no runtime dependencies today
+  # (spec R6); this covers its build requirements and any that get added.
   - package-ecosystem: pip
-    directory: /clients/python
+    directories:
+      - /
+      - /clients/python
     schedule:
       interval: monthly
     groups:
