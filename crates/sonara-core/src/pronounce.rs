@@ -18,14 +18,14 @@
 //! twelfth of December", are the owner's choice (2026-10-13).
 use crate::code_speech;
 use crate::numbers::{cardinal, cardinal_str, decimal, ordinal, plural, spell_digits, year};
-use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::RwLock;
 
 /// The user's own pronunciations, matched first (whole words, case
 /// sensitive): (written, said).
-static USER: Lazy<RwLock<UserWords>> = Lazy::new(|| RwLock::new(UserWords::default()));
+static USER: LazyLock<RwLock<UserWords>> = LazyLock::new(|| RwLock::new(UserWords::default()));
 
 /// The user's words and one pattern for all of them (longest first), so a
 /// word is matched once and a `say` is never read by another entry.
@@ -292,7 +292,7 @@ const TECH_SYMBOLS: &[(&str, &str)] = &[
 
 /// Tech terms said other than letter by letter or as the plain word
 /// (survey section 5.1; owner's choice SQL "sequel"). Exact case.
-static TECH: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
+static TECH: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     HashMap::from([
         ("SQL", "sequel"),
         ("MySQL", "my S Q L"),
@@ -427,7 +427,7 @@ static TECH: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
 });
 
 /// Capitalised words said as words, never spelled (survey section 5.2).
-static KEEP: Lazy<std::collections::HashSet<&'static str>> = Lazy::new(|| {
+static KEEP: LazyLock<std::collections::HashSet<&'static str>> = LazyLock::new(|| {
     [
         "NASA", "NATO", "RAM", "ROM", "LAN", "WAN", "GIF", "RAID", "NAND", "CRUD", "BASIC", "DOS",
         "ANSI", "QWERTY", "CERN", "DARPA", "NASDAQ", "FEMA", "UNICEF", "UNESCO", "OPEC", "AIDS",
@@ -775,7 +775,7 @@ struct Rules {
     grouped_space: Regex,
 }
 
-static RULES: Lazy<Rules> = Lazy::new(|| {
+static RULES: LazyLock<Rules> = LazyLock::new(|| {
     let months = "January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec";
     let units = UNITS
         .iter()
@@ -937,8 +937,10 @@ pub fn pronounce(text: &str) -> String {
                 // "-05:00" is "minus five", "+05:30" "plus five thirty".
                 Some(z) => {
                     let digits = z[1..].replace(':', "");
-                    let (oh, om): (u64, u64) =
-                        (digits.get(..2)?.parse().ok()?, digits.get(2..)?.parse().ok()?);
+                    let (oh, om): (u64, u64) = (
+                        digits.get(..2)?.parse().ok()?,
+                        digits.get(2..)?.parse().ok()?,
+                    );
                     w.push_str(" U T C");
                     if (oh, om) != (0, 0) {
                         let sign = if z.starts_with('-') { "minus" } else { "plus" };
@@ -1063,14 +1065,15 @@ fn user(t: &str, kept: &mut Vec<String>) -> String {
     })
 }
 
-static TECH_SYMBOL_RES: Lazy<Vec<(&'static str, &'static str, Regex)>> = Lazy::new(|| {
+static TECH_SYMBOL_RES: LazyLock<Vec<(&'static str, &'static str, Regex)>> = LazyLock::new(|| {
     TECH_SYMBOLS
         .iter()
         .map(|(t, s)| (*t, *s, re(&regex::escape(t))))
         .collect()
 });
-static PLACEHOLDER: Lazy<Regex> = Lazy::new(|| re("\u{E020}([\u{E030}-\u{E039}]+)\u{E021}"));
-static SLASH_WORDS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
+static PLACEHOLDER: LazyLock<Regex> =
+    LazyLock::new(|| re("\u{E020}([\u{E030}-\u{E039}]+)\u{E021}"));
+static SLASH_WORDS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     [
         ("n/a", "not applicable"),
         ("N/A", "not applicable"),

@@ -1215,7 +1215,6 @@ dependencies = [
 name = "sonara-core"
 version = "0.38.4"
 dependencies = [
- "once_cell",
  "regex",
  "serde",
  "serde_json",

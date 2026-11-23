@@ -1,8 +1,8 @@
 //! Strip markdown noise and normalize symbols so text reads naturally aloud.
 //! Port of the retired Python plugin's `cleaner.py` (removed in #248); the
 //! golden fixtures (`tests/fixtures/text_rules`) are the contract.
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 // Python's `\s` on str also matches the separators U+001C..U+001F (they count as
 // str.isspace()); Rust's Unicode `\s` does not. Every whitespace class below is
@@ -14,30 +14,32 @@ use regex::Regex;
 // scanners below instead of fancy-regex: fancy-regex stops after 1M backtracks,
 // and its `replace_all` then panics on long input that Python handles.
 
-static LINK: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]\n]+)\]\((?:[^)\n]+)\)").unwrap());
-static INLINE_CODE: Lazy<Regex> = Lazy::new(|| Regex::new(r"`([^`\n]*)`").unwrap());
-static HEADING: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^#{1,6}[\s\x1C-\x1F]+").unwrap());
-static BULLET: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^([\s\x1C-\x1F]*)[-*+•][ \t]+").unwrap());
-static URL_SCHEME: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://").unwrap());
-static TABLE_SEP: Lazy<Regex> = Lazy::new(|| {
+static LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[([^\]\n]+)\]\((?:[^)\n]+)\)").unwrap());
+static INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`\n]*)`").unwrap());
+static HEADING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^#{1,6}[\s\x1C-\x1F]+").unwrap());
+static BULLET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^([\s\x1C-\x1F]*)[-*+•][ \t]+").unwrap());
+static URL_SCHEME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://").unwrap());
+static TABLE_SEP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^[\s\x1C-\x1F]*\|?[\s\x1C-\x1F:|-]*-{3,}[\s\x1C-\x1F:|-]*\|?[\s\x1C-\x1F]*$")
         .unwrap()
 });
-static LIST_ORDINAL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^([\s\x1C-\x1F]*)(\d{1,3})\.([\s\x1C-\x1F]+)").unwrap());
-static LIST_ITEM_END: Lazy<Regex> = Lazy::new(|| {
+static LIST_ORDINAL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^([\s\x1C-\x1F]*)(\d{1,3})\.([\s\x1C-\x1F]+)").unwrap());
+static LIST_ITEM_END: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^([\s\x1C-\x1F]*\d{1,3}: .*[^\s\x1C-\x1F.!?:;])[ \t]*\n").unwrap()
 });
-static WHITESPACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\s\x1C-\x1F]+").unwrap());
-static WORD_RUN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z0-9_]+").unwrap());
-static ARROW: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[\s\x1C-\x1F]*(?:->|=>|-->|→)[\s\x1C-\x1F]*").unwrap());
-static STRAY_MD: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[*_`~#|•✓✔✗✘❌✅☑⏳⌛⚠\x{FE0F}]+").unwrap());
+static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s\x1C-\x1F]+").unwrap());
+static WORD_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9_]+").unwrap());
+static ARROW: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\s\x1C-\x1F]*(?:->|=>|-->|→)[\s\x1C-\x1F]*").unwrap());
+static STRAY_MD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[*_`~#|•✓✔✗✘❌✅☑⏳⌛⚠\x{FE0F}]+").unwrap());
 /// A status mark standing alone: at the start or after a clause end, and
 /// before the next one or the end (a table cell, a line, "Status: ✅.").
-static STATUS_ALONE: Lazy<Regex> = Lazy::new(|| {
+static STATUS_ALONE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)(^[ \t]*|[:;,.!?][ \t]+)([✅✔✓☑❌✗✘⏳⌛⚠])\x{FE0F}?[ \t]*([.,;:!?]|$)")
         .unwrap()
 });

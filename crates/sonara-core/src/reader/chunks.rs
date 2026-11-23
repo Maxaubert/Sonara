@@ -1,11 +1,11 @@
 //! Split one text into the chunks of one item.
 use crate::assembler::{Chunk, ProseAssembler};
 use crate::code_speech::{unmarked, CODE_LINE, CODE_START, SPOKEN};
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// A paragraph boundary in spoken text: a blank line.
-static BLANK_LINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n[ \t]*\n").expect("valid"));
+static BLANK_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n[ \t]*\n").expect("valid"));
 
 /// `text` without the spoken-form marker, and whether it had it.
 fn spoken_form(text: &str) -> (bool, &str) {
