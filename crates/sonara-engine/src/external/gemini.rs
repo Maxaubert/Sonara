@@ -32,7 +32,9 @@
 //!   `Retry-After`) is kept, so nothing is sent before it ends (`health`).
 //!   A per-day limit waits for the daily reset (`daily_wait`).
 use super::adapter::{encode, stopped_early, ModelInfo, ModelSource, StreamPiece, VoiceSource};
-use super::adapter::{key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo};
+use super::adapter::{
+    key_allowed, wait_from_secs, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo,
+};
 use super::audio::decode_body;
 use super::error::{clean, headline, model_message, ExtError};
 use super::keys::Secret;
@@ -286,10 +288,7 @@ pub fn retry_delay(body: &Value) -> Option<Duration> {
         })
         .find_map(|d| {
             let s = d.get("retryDelay")?.as_str()?.trim().strip_suffix('s')?;
-            s.parse::<f64>()
-                .ok()
-                .filter(|x| x.is_finite() && *x >= 0.0)
-                .map(Duration::from_secs_f64)
+            wait_from_secs(s)
         })
 }
 
@@ -1070,6 +1069,14 @@ mod tests {
             {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "x"}]}})),
             None
         );
+        let delay = |d: &str| {
+            retry_delay(&json!({"error": {"details": [
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": d}]}}))
+        };
+        assert_eq!(delay("1e20s"), Some(super::super::adapter::MAX_RETRY_WAIT));
+        assert_eq!(delay("1.5s"), Some(Duration::from_millis(1500)));
+        assert_eq!(delay("-3s"), None);
+        assert_eq!(delay("NaNs"), None);
         assert!(super::daily_or_spend("", "Quota exceeded per day"));
         assert!(!super::daily_or_spend("", "Too many requests"));
     }

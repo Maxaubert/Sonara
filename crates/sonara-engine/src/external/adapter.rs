@@ -370,6 +370,19 @@ pub fn send(
     }
 }
 
+/// The longest wait a server can ask for; a larger value is cut to this.
+pub const MAX_RETRY_WAIT: Duration = Duration::from_secs(24 * 3600);
+
+/// A wait in seconds as text (`"3"`, `"1.5"`): `None` when it is not a
+/// finite number of at least zero, at most `MAX_RETRY_WAIT` otherwise.
+pub fn wait_from_secs(text: &str) -> Option<Duration> {
+    let s = text
+        .parse::<f64>()
+        .ok()
+        .filter(|s| s.is_finite() && *s >= 0.0)?;
+    Some(Duration::try_from_secs_f64(s).map_or(MAX_RETRY_WAIT, |d| d.min(MAX_RETRY_WAIT)))
+}
+
 /// The status, `Content-Type` and `Retry-After` of a response.
 pub fn head(resp: &ureq::http::Response<ureq::Body>) -> (u16, Option<String>, Option<Duration>) {
     let header = |n: &str| {
@@ -378,13 +391,7 @@ pub fn head(resp: &ureq::http::Response<ureq::Body>) -> (u16, Option<String>, Op
             .and_then(|v| v.to_str().ok())
             .map(str::to_string)
     };
-    let retry_after = header("retry-after").and_then(|v| {
-        v.trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|s| s.is_finite() && *s >= 0.0)
-            .map(Duration::from_secs_f64)
-    });
+    let retry_after = header("retry-after").and_then(|v| wait_from_secs(v.trim()));
     (resp.status().as_u16(), header("content-type"), retry_after)
 }
 
@@ -540,6 +547,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_retry_wait_is_parsed_and_never_panics() {
+        assert_eq!(wait_from_secs("3"), Some(Duration::from_secs(3)));
+        assert_eq!(wait_from_secs("1.5"), Some(Duration::from_millis(1500)));
+        assert_eq!(wait_from_secs("1e20"), Some(MAX_RETRY_WAIT));
+        assert_eq!(wait_from_secs("-1"), None);
+        assert_eq!(wait_from_secs("NaN"), None);
+        assert_eq!(wait_from_secs("inf"), None);
+        assert_eq!(wait_from_secs("soon"), None);
+    }
 
     #[test]
     fn error_shapes_of_the_researched_servers() {
