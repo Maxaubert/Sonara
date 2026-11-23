@@ -12,3 +12,11 @@ deny = [
     { name = "espeakng" }, { name = "espeakng-sys" }, { name = "espeak-sys" },
     { name = "piper-phonemize" }, { name = "piper-phonemize-sys" },
 ]
+
+[advisories]
+# RustSec advisories (vulnerable, unmaintained, unsound or yanked crates).
+# Checked by .github/workflows/advisories.yml (weekly and on a Cargo.lock
+# or deny.toml change), not by the required ci.yml deny job: a new advisory
+# must not turn every unrelated PR red. An ignore entry names the advisory
+# id and the reason; there are none.
+ignore = []

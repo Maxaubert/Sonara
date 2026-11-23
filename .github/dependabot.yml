@@ -1,6 +1,12 @@
-# Keeps the workflows' actions current (#250). Each Dependabot PR still
-# needs a version bump before it is merged: release.yml publishes every
-# successful push to main and refuses a version that already exists.
+# Keeps the workflows' actions (#250), the Rust crates, the npm packages
+# and the Python SDK current. Every Dependabot PR that touches more than
+# .github/ needs a version bump before it is merged (python
+# packaging/bump_version.py <version>): release.yml publishes every
+# successful push to main that changes code and refuses a version that
+# already exists. A cargo PR also needs `python packaging/notices/gen_notices.py`
+# (commit the result; ci.yml checks THIRD_PARTY_NOTICES.md).
+# The actions are pinned by commit SHA with the version in a trailing
+# comment; Dependabot updates both.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -12,3 +18,42 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: ci
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps(cargo)
+
+  # One directory per package.json with a lockfile. packaging/npm-runtime
+  # has no dependencies and no lockfile, so it is not listed.
+  - package-ecosystem: npm
+    directories:
+      - /clients/ts
+      - /clients/player
+      - /examples/player-demo
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps(npm)
+
+  # The Python SDK has no runtime dependencies today (spec R6); this covers
+  # its build requirements and any that get added. The root pyproject.toml
+  # holds only [dependency-groups] (the dev tools), which Dependabot's pip
+  # support is not known to read, so / is not listed.
+  - package-ecosystem: pip
+    directory: /clients/python
+    schedule:
+      interval: monthly
+    groups:
+      pip:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps(pip)
