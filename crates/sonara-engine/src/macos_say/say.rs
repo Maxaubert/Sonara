@@ -1,8 +1,8 @@
 //! The process side of the macOS engine: one `say` per synthesis, writing a
 //! WAV to a temp file that is read and removed.
 use super::{
-    choose_voice, classify_failure, guard_text, no_voices, parse_voices, say_rate, VoiceInfo,
-    DATA_FORMAT, ID, SAY,
+    cannot_run, choose_voice, classify_failure, guard_text, list_voices, no_voices, say_rate,
+    VoiceInfo, DATA_FORMAT, ID, LIST_TIMEOUT, SAY,
 };
 use crate::{wav, Engine, EngineId, Error, LicenseClass, PcmStream, Result, Voice};
 use std::collections::HashMap;
@@ -112,31 +112,23 @@ impl MacSay {
     }
 
     fn cannot_run(&self, e: std::io::Error) -> Error {
-        Error::Engine(format!(
-            "macOS speech is unavailable: cannot run {}: {e}",
-            self.program.display()
-        ))
+        cannot_run(self.program.as_os_str(), e)
     }
 
-    /// The voices `say -v '?'` lists; an empty list is not cached.
+    /// The voices `say -v '?'` lists; an empty list is not cached. The call
+    /// has a time limit and is tracked in `running`, so `cancel` ends it.
     fn voice_infos(&self) -> Result<Vec<VoiceInfo>> {
-        if let Some(v) = lock(&self.voices).as_ref() {
-            return Ok(v.clone());
-        }
-        let out = Command::new(&self.program)
-            .args(["-v", "?"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| self.cannot_run(e))?;
-        if !out.status.success() {
-            return Err(classify_failure(&out.status.to_string(), ""));
-        }
-        let voices = parse_voices(&String::from_utf8_lossy(&out.stdout));
-        if !voices.is_empty() {
-            *lock(&self.voices) = Some(voices.clone());
-        }
-        Ok(voices)
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        let mut cmd = Command::new(&self.program);
+        cmd.args(["-v", "?"]);
+        list_voices(
+            cmd,
+            LIST_TIMEOUT,
+            &self.running,
+            self.next.fetch_add(1, Ordering::SeqCst),
+            &|| self.epoch.load(Ordering::SeqCst) != epoch,
+            &self.voices,
+        )
     }
 
     /// Synthesize to the WAV bytes `say` writes.
