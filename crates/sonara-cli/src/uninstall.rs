@@ -138,6 +138,12 @@ fn remove_later(_folder: &Path) -> std::io::Result<()> {
     Err(std::io::Error::other("not supported"))
 }
 
+/// Whether the runtime folder is removed after this process exits: only
+/// Windows cannot delete a running exe; unix can.
+fn deferred(exe_in_root: bool, windows: bool) -> bool {
+    exe_in_root && windows
+}
+
 /// Remove the runtime folders (`runtime_root`) and what Sonara made in
 /// `home` except what `keep` names (anything else is listed in
 /// `Report::unknown` and left); then write the stop sentinel, so the plugin's
@@ -146,7 +152,7 @@ pub fn remove_all(home: &Path, runtime_root: Option<&Path>, exe: &Path, keep: &[
     let mut report = Report::default();
     let kept: Vec<&str> = keep.iter().flat_map(|k| k.names()).copied().collect();
     if let Some(root) = runtime_root.filter(|r| r.exists()) {
-        if is_within(exe, root) {
+        if deferred(is_within(exe, root), cfg!(windows)) {
             match remove_later(root) {
                 Ok(()) => report.deferred = Some(root.to_path_buf()),
                 Err(e) => report.failed.push((root.to_path_buf(), e.to_string())),
@@ -510,6 +516,30 @@ mod tests {
         }
         assert!(home.join("Photos").join("a.jpg").exists());
         assert_eq!(r.unknown, left.to_vec());
+    }
+
+    #[test]
+    fn only_windows_defers_the_removal() {
+        assert!(deferred(true, true));
+        assert!(!deferred(true, false));
+        assert!(!deferred(false, true));
+        assert!(!deferred(false, false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_running_exe_inside_the_runtime_is_removed_at_once_on_unix() {
+        let lad = tmp();
+        let home = lad.join("Sonara");
+        let root = home.join("runtime");
+        std::fs::create_dir_all(root.join("0.11.0")).unwrap();
+        let exe = root.join("0.11.0").join("sonara");
+        std::fs::write(&exe, b"x").unwrap();
+        let r = remove_all(&home, Some(&root), &exe, &[]);
+        assert!(r.failed.is_empty(), "{:?}", r.failed);
+        assert!(r.deferred.is_none());
+        assert!(!root.exists());
+        assert!(r.removed.contains(&root));
     }
 
     #[test]

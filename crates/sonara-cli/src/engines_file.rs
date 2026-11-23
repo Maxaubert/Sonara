@@ -125,7 +125,18 @@ pub fn write(home: &Path, profile: &Value, replace: bool) -> Result<Written, Str
         .filter(|s| !s.is_empty())
         .ok_or("the engine needs an id")?;
     let file = home.join(FILE);
-    let before = std::fs::read_to_string(&file).ok();
+    // Only a missing file is "no file": any other read error (bad bytes,
+    // no permission) must not end in the file being replaced.
+    let before = match std::fs::read_to_string(&file) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(format!(
+                "cannot read {}: {e}: fix it or move it away first",
+                file.display()
+            ))
+        }
+    };
     let mut doc: Map<String, Value> = match &before {
         None => Map::new(),
         Some(text) => match serde_json::from_str::<Value>(text) {
@@ -304,6 +315,17 @@ mod tests {
         assert!(write(&h, &piper("x", json!([exe()])), false)
             .unwrap_err()
             .contains("is not valid JSON"));
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn an_unreadable_file_is_not_replaced() {
+        let h = home("unreadable");
+        let bytes = b"{\"engines\":[]}\xff";
+        std::fs::write(h.join(FILE), bytes).unwrap();
+        let e = write(&h, &piper("say", json!([exe()])), false).unwrap_err();
+        assert!(e.contains("cannot read"), "{e}");
+        assert_eq!(std::fs::read(h.join(FILE)).unwrap(), bytes);
         let _ = std::fs::remove_dir_all(&h);
     }
 
