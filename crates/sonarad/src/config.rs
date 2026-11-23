@@ -554,6 +554,10 @@ struct Inner {
     /// The label each channel's client gave it (memory only), so a page
     /// can show it next to the user's own name for it.
     client_labels: HashMap<String, String>,
+    /// `config.json` / `session_prefs.json` could not be read (or copied)
+    /// at load: a save copies it to `<name>.bad` before replacing it.
+    config_guarded: bool,
+    prefs_guarded: bool,
 }
 
 /// The persisted settings of one home (or of none: `memory`).
@@ -562,38 +566,119 @@ pub struct Store {
     inner: Mutex<Inner>,
 }
 
-/// Read a JSON object file. A file that exists but is not a JSON object is
-/// copied to `<name>.bad` first when `backup` is set, so the next save
-/// (which replaces it) does not lose what the user had.
-fn read_object(path: &Path, problems: &mut Vec<String>, backup: bool) -> Map<String, Value> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Map::new(),
+/// Where the copy of a file that could not be read goes: `<name>.bad`.
+fn bad_path(path: &Path) -> PathBuf {
+    let mut bad = path.as_os_str().to_owned();
+    bad.push(".bad");
+    PathBuf::from(bad)
+}
+
+/// Copy `bytes` (the file at `path` as it was) to `<name>.bad`. An
+/// existing copy with the same bytes is left alone, and an empty file
+/// (nothing to lose) makes no copy.
+fn keep_copy(path: &Path, bytes: &[u8]) -> std::io::Result<Option<PathBuf>> {
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    let bad = bad_path(path);
+    if std::fs::read(&bad).is_ok_and(|old| old == bytes) {
+        return Ok(Some(bad));
+    }
+    std::fs::write(&bad, bytes)?;
+    Ok(Some(bad))
+}
+
+/// Read a file, retrying a few times (well under a second in all) when it
+/// fails for another reason than not being there: a virus scanner or an
+/// editor can hold it for a moment on Windows.
+fn read_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut tries = 0;
+    loop {
+        match std::fs::read(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound && tries < 4 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Read a JSON object file. A file that exists but is not UTF-8 text or
+/// not a JSON object is copied to `<name>.bad` first, so the next save
+/// (which replaces it) does not lose what the user had. Returns the
+/// object and whether the file must not be replaced before a copy is made
+/// (it could not be read, or the copy failed).
+fn read_object(path: &Path, problems: &mut Vec<String>) -> (Map<String, Value>, bool) {
+    let bytes = match read_bytes(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Map::new(), false),
         Err(e) => {
-            problems.push(format!("cannot read {}: {e}", path.display()));
-            return Map::new();
+            problems.push(format!(
+                "cannot read {}: {e}; using the defaults (the file is not replaced \
+                 until a copy of it is made)",
+                path.display()
+            ));
+            return (Map::new(), true);
         }
     };
-    match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
-        Ok(Value::Object(m)) => m,
-        _ => {
-            let mut note = format!(
-                "{} is not a JSON object; using the defaults",
+    let what = match std::str::from_utf8(&bytes) {
+        Ok(text) => match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
+            Ok(Value::Object(m)) => return (m, false),
+            _ => "is not a JSON object",
+        },
+        Err(_) => "is not UTF-8 text",
+    };
+    let mut note = format!("{} {what}; using the defaults", path.display());
+    let mut guard = false;
+    match keep_copy(path, &bytes) {
+        Ok(Some(bad)) => note.push_str(&format!(" (a copy is in {})", bad.display())),
+        Ok(None) => note.push_str(" (it is empty)"),
+        Err(e) => {
+            guard = true;
+            note.push_str(&format!(
+                " (cannot copy it to {}: {e}; it is not replaced until a copy is made)",
+                bad_path(path).display()
+            ));
+        }
+    }
+    problems.push(note);
+    (Map::new(), guard)
+}
+
+/// Whether a save may replace `path`. A file that could not be read (or
+/// copied) at load is copied to `<name>.bad` first; while that fails the
+/// save is refused (the change stays in memory). `guarded` is cleared once
+/// the copy is made or the file is gone.
+fn may_replace(path: &Path, guarded: &mut bool) -> bool {
+    if !*guarded {
+        return true;
+    }
+    let copied = match std::fs::read(path) {
+        Ok(bytes) => keep_copy(path, &bytes).map(|bad| {
+            if let Some(bad) = bad {
+                eprintln!(
+                    "sonarad: {} could not be read at start; a copy is in {} before it is replaced",
+                    path.display(),
+                    bad.display()
+                );
+            }
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    };
+    match copied {
+        Ok(()) => {
+            *guarded = false;
+            true
+        }
+        Err(e) => {
+            eprintln!(
+                "sonarad: not saved: {} could not be read or copied ({e}); the change \
+                 applies until Sonara stops",
                 path.display()
             );
-            if backup {
-                let mut bad = path.as_os_str().to_owned();
-                bad.push(".bad");
-                let bad = PathBuf::from(bad);
-                match std::fs::write(&bad, &text) {
-                    Ok(()) => note.push_str(&format!(" (a copy is in {})", bad.display())),
-                    Err(e) => {
-                        note.push_str(&format!(" (cannot copy it to {}: {e})", bad.display()))
-                    }
-                }
-            }
-            problems.push(note);
-            Map::new()
+            false
         }
     }
 }
@@ -615,6 +700,8 @@ impl Store {
                 extra: Map::new(),
                 prefs: Vec::new(),
                 client_labels: HashMap::new(),
+                config_guarded: false,
+                prefs_guarded: false,
             }),
         })
     }
@@ -623,7 +710,7 @@ impl Store {
     /// found (values dropped, unreadable files), for the log.
     pub fn load(dir: &Path) -> (Arc<Store>, Vec<String>) {
         let mut problems = Vec::new();
-        let raw = read_object(&dir.join(CONFIG_FILE), &mut problems, true);
+        let (raw, config_guarded) = read_object(&dir.join(CONFIG_FILE), &mut problems);
         let mut user = Map::new();
         let mut extra = Map::new();
         for (key, value) in raw {
@@ -659,7 +746,7 @@ impl Store {
             // In memory only: written with the next change (#222).
             user.insert("read_mode".into(), mode);
         }
-        let raw = read_object(&dir.join(PREFS_FILE), &mut problems, false);
+        let (raw, prefs_guarded) = read_object(&dir.join(PREFS_FILE), &mut problems);
         let mut prefs: Vec<(String, Prefs, u64)> = raw
             .iter()
             .filter(|(id, _)| !id.is_empty())
@@ -679,6 +766,8 @@ impl Store {
                 extra,
                 prefs,
                 client_labels: HashMap::new(),
+                config_guarded,
+                prefs_guarded,
             }),
         };
         (Arc::new(store), problems)
@@ -709,9 +798,12 @@ impl Store {
         self.lock().user.clone()
     }
 
-    fn save_config(&self, inner: &Inner) {
+    fn save_config(&self, inner: &mut Inner) {
         if let Some(dir) = &self.dir {
             let path = dir.join(CONFIG_FILE);
+            if !may_replace(&path, &mut inner.config_guarded) {
+                return;
+            }
             let mut all = inner.extra.clone();
             all.extend(inner.user.clone());
             if let Err(e) = write_json(&path, &Value::Object(all)) {
@@ -720,8 +812,12 @@ impl Store {
         }
     }
 
-    fn save_prefs(&self, inner: &Inner) {
+    fn save_prefs(&self, inner: &mut Inner) {
         if let Some(dir) = &self.dir {
+            let path = dir.join(PREFS_FILE);
+            if !may_replace(&path, &mut inner.prefs_guarded) {
+                return;
+            }
             let map: Map<String, Value> = inner
                 .prefs
                 .iter()
@@ -731,7 +827,6 @@ impl Store {
                     (id.clone(), v)
                 })
                 .collect();
-            let path = dir.join(PREFS_FILE);
             if let Err(e) = write_json(&path, &Value::Object(map)) {
                 eprintln!("sonarad: cannot write {}: {e}", path.display());
             }
@@ -755,7 +850,7 @@ impl Store {
                     return;
                 }
                 inner.user.insert(key.to_string(), v);
-                self.save_config(&inner);
+                self.save_config(&mut inner);
             }
             Err(e) => eprintln!("sonarad: not saved: {e}"),
         }
@@ -766,7 +861,7 @@ impl Store {
         let mut inner = self.lock();
         let refused = inner.extra.remove(key).is_some();
         if inner.user.remove(key).is_some() || refused {
-            self.save_config(&inner);
+            self.save_config(&mut inner);
         }
     }
 
@@ -805,7 +900,7 @@ impl Store {
         } else {
             inner.user.insert("summaries".into(), Value::Object(stored));
         }
-        self.save_config(&inner);
+        self.save_config(&mut inner);
     }
 
     /// The `summaries` fields the user set.
@@ -874,7 +969,7 @@ impl Store {
             let excess = inner.prefs.len().saturating_sub(PREFS_CAP);
             inner.prefs.drain(..excess);
         }
-        self.save_prefs(&inner);
+        self.save_prefs(&mut inner);
         p
     }
 
@@ -885,7 +980,7 @@ impl Store {
         inner.prefs.retain(|(id, _, _)| id != channel);
         inner.client_labels.remove(channel);
         if inner.prefs.len() != before {
-            self.save_prefs(&inner);
+            self.save_prefs(&mut inner);
         }
     }
 
@@ -1372,6 +1467,157 @@ mod tests {
         assert!(apply_reader(&store, &reader, false).is_empty());
         assert_eq!(reader.get(Key::Voice).unwrap(), V::Text("silence".into()));
         reader.shutdown();
+    }
+
+    /// `text` as UTF-16 LE with a BOM (PowerShell 5 `Out-File`, Notepad
+    /// "Unicode").
+    fn utf16(text: &str) -> Vec<u8> {
+        let mut bytes = vec![0xff, 0xfe];
+        for u in text.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn bad(dir: &Path, name: &str) -> PathBuf {
+        dir.join(format!("{name}.bad"))
+    }
+
+    #[test]
+    fn a_config_file_that_is_not_utf8_is_copied_before_a_save_replaces_it() {
+        let dir = tmp();
+        let original = utf16(r#"{"rate": 300, "voice": "af_bella"}"#);
+        std::fs::write(dir.join(CONFIG_FILE), &original).unwrap();
+        let (store, problems) = Store::load(&dir);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("config.json.bad"), "{problems:?}");
+        assert_eq!(store.value("rate"), json!(250), "the defaults apply");
+        assert_eq!(std::fs::read(bad(&dir, CONFIG_FILE)).unwrap(), original);
+        store.record("volume", &json!(40));
+        assert_eq!(read(&dir.join(CONFIG_FILE)), json!({"volume": 40}));
+        assert_eq!(
+            std::fs::read(bad(&dir, CONFIG_FILE)).unwrap(),
+            original,
+            "the user's settings are still in the copy"
+        );
+    }
+
+    #[test]
+    fn a_prefs_file_that_is_not_utf8_or_json_is_copied_before_a_save_replaces_it() {
+        for original in [utf16(r#"{"s1": {"name": "Build"}}"#), b"{oops".to_vec()] {
+            let dir = tmp();
+            std::fs::write(dir.join(PREFS_FILE), &original).unwrap();
+            let (store, problems) = Store::load(&dir);
+            assert_eq!(problems.len(), 1, "{problems:?}");
+            assert!(
+                problems[0].contains("session_prefs.json.bad"),
+                "{problems:?}"
+            );
+            assert_eq!(std::fs::read(bad(&dir, PREFS_FILE)).unwrap(), original);
+            store.set_prefs(
+                "s2",
+                PrefsUpdate {
+                    muted: Some(true),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(read(&dir.join(PREFS_FILE))["s2"]["muted"], json!(true));
+            assert_eq!(std::fs::read(bad(&dir, PREFS_FILE)).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn a_missing_file_makes_no_copy_and_a_bom_file_still_loads() {
+        let dir = tmp();
+        let (store, problems) = Store::load(&dir);
+        assert!(problems.is_empty(), "{problems:?}");
+        store.record("rate", &json!(300));
+        store.set_prefs(
+            "s1",
+            PrefsUpdate {
+                muted: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(!bad(&dir, CONFIG_FILE).exists());
+        assert!(!bad(&dir, PREFS_FILE).exists());
+        let dir = tmp();
+        std::fs::write(dir.join(CONFIG_FILE), "\u{feff}{\"rate\": 260}").unwrap();
+        let (store, problems) = Store::load(&dir);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(store.value("rate"), json!(260));
+        assert!(!bad(&dir, CONFIG_FILE).exists());
+    }
+
+    #[test]
+    fn an_identical_bad_copy_is_not_rewritten() {
+        let dir = tmp();
+        std::fs::write(dir.join(CONFIG_FILE), "{not json").unwrap();
+        let _ = Store::load(&dir);
+        let copy = bad(&dir, CONFIG_FILE);
+        let when = std::fs::metadata(&copy).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let (_, problems) = Store::load(&dir);
+        assert!(problems[0].contains("config.json.bad"), "{problems:?}");
+        assert_eq!(
+            std::fs::metadata(&copy).unwrap().modified().unwrap(),
+            when,
+            "the same bytes are not written again"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_file_is_not_replaced_until_a_copy_is_made() {
+        use std::os::windows::fs::OpenOptionsExt;
+        for name in [CONFIG_FILE, PREFS_FILE] {
+            let dir = tmp();
+            let path = dir.join(name);
+            let original = br#"{"rate": 300, "s1": {"name": "Build"}}"#.to_vec();
+            std::fs::write(&path, &original).unwrap();
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&path)
+                .unwrap();
+            let (store, problems) = Store::load(&dir);
+            assert_eq!(problems.len(), 1, "{name}: {problems:?}");
+            assert!(problems[0].contains("cannot read"), "{problems:?}");
+            let change = |volume: u64| {
+                if name == CONFIG_FILE {
+                    store.record("volume", &json!(volume));
+                } else {
+                    store.set_prefs(
+                        &format!("c{volume}"),
+                        PrefsUpdate {
+                            muted: Some(true),
+                            ..Default::default()
+                        },
+                    );
+                }
+            };
+            change(40);
+            if name == CONFIG_FILE {
+                assert_eq!(store.value("volume"), json!(40), "changed in memory");
+            }
+            drop(lock);
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                original,
+                "{name}: not replaced while locked"
+            );
+            assert!(!bad(&dir, name).exists());
+            // Readable again: the next save copies it first.
+            change(50);
+            assert_eq!(std::fs::read(bad(&dir, name)).unwrap(), original, "{name}");
+            let saved = read(&path);
+            if name == CONFIG_FILE {
+                assert_eq!(saved, json!({"volume": 50}), "kept in memory, then saved");
+            } else {
+                assert_eq!(saved["c50"]["muted"], json!(true));
+                assert_eq!(saved["c40"]["muted"], json!(true));
+            }
+        }
     }
 
     #[test]
