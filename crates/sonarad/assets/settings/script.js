@@ -1234,7 +1234,24 @@ wireSegments("ef-send", v => {
   markDirty();
 });
 
-// ---- the voice list, before and after a save -------------------------------
+// ---- the voice and model lists, before and after a save (#235) ------------
+// One "list or Other id" select. opts are [value, text] without the "Other"
+// entry. The typed-id field is set from `current` unless the user is typing.
+function fillIdSelect(sel, other, opts, current, otherText) {
+  // A list that arrives while the user is typing another id keeps it open.
+  const typing = sel.value === "__other" && !current;
+  sel.textContent = "";
+  for (const [value, text] of opts.concat([["__other", otherText]])) {
+    const o = el("option", null, text);
+    o.value = value;
+    sel.appendChild(o);
+  }
+  const listed = !current || opts.some(o => o[0] === current);
+  sel.value = typing ? "__other" : !current ? "" : listed ? current : "__other";
+  // A typed id is never wiped by a list that arrives meanwhile.
+  if (!typing) other.value = listed ? "" : current;
+}
+
 function fillVoiceSelect(list, current) {
   const sel = $("ef-voice");
   const prov = providerName();
@@ -1242,22 +1259,10 @@ function fillVoiceSelect(list, current) {
   // taken for a Kokoro voice of the same name. No voice is preselected.
   const opts = [["", list.length ? "Choose a voice" : "Choose a voice (none listed yet)"]];
   for (const v of list) opts.push([v.id, (v.name || v.id) + " (" + prov + ")"]);
-  opts.push(["__other", "Other voice id…"]);
-  // A list that arrives while the user is typing another id keeps it open.
-  const typing = sel.value === "__other" && !current;
-  sel.textContent = "";
-  for (const [value, text] of opts) {
-    const o = el("option", null, text);
-    o.value = value;
-    sel.appendChild(o);
-  }
-  const listed = !current || list.some(v => v.id === current);
-  sel.value = typing ? "__other" : !current ? "" : listed ? current : "__other";
-  $("ef-voice-other").value = listed ? "" : current;
+  fillIdSelect(sel, $("ef-voice-other"), opts, current, "Other voice id…");
   $("ef-voice-other").hidden = sel.value !== "__other";
 }
 
-// ---- the model list, before and after a save (#235) -----------------------
 function fillModelSelect(list, current) {
   const sel = $("ef-model-select");
   const text = $("ef-model");
@@ -1268,21 +1273,12 @@ function fillModelSelect(list, current) {
     ? (list.length ? "Choose a model" : "Choose a model (none listed yet)")
     : possessive(providerName()) + " own choice"]];
   for (const m of list) opts.push([m.id, m.name && m.name !== m.id ? m.name + " (" + m.id + ")" : m.id]);
-  opts.push(["__other", "Other model id…"]);
-  const typing = sel.value === "__other" && !current;
-  sel.textContent = "";
-  for (const [value, label] of opts) {
-    const o = el("option", null, label);
-    o.value = value;
-    sel.appendChild(o);
-  }
-  const inList = !current || list.some(m => m.id === current);
-  sel.value = typing ? "__other" : !current ? "" : inList ? current : "__other";
+  const typed = text.value;
+  fillIdSelect(sel, text, opts, current, "Other model id…");
   if (!listed) {
     text.hidden = false;
-    text.value = current || text.value;
+    text.value = current || typed;
   } else {
-    if (!typing) text.value = inList ? "" : current;
     text.hidden = sel.value !== "__other";
   }
   // The label points at the visible control.

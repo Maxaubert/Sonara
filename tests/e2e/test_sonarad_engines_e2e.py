@@ -655,6 +655,31 @@ def test_voices_load_before_a_save_and_name_the_engine(live, browser):
         cloud.stop()
 
 
+def test_a_voice_list_that_arrives_while_typing_another_id_keeps_the_field(live, browser):
+    # #40: the voice and model selects share one helper; a list landing while
+    # "Other voice id" is open and being typed in never rewrites the field.
+    cloud = FakeCloud("elevenlabs", SECRET)
+    try:
+        lv = live()
+        page, _ = open_engines(browser, lv.url)
+        page.click("#engine-new")
+        page.select_option("#ef-kind", "elevenlabs")
+        page.fill("#ef-url", cloud.url)
+        page.fill("#ef-key", SECRET)
+        page.wait_for_selector("#ef-voice option[value=voice-a]", state="attached")
+        page.select_option("#ef-voice", "__other")
+        page.fill("#ef-voice-other", "  ")   # typing: nothing but blanks yet
+        asked = len([r for r in cloud.requests if r["path"].startswith("/v2/voices")])
+        page.locator("#ef-key").dispatch_event("input")   # asks the provider again
+        assert eventually(lambda: len([r for r in cloud.requests if r["path"].startswith("/v2/voices")]) > asked)
+        pw.expect(page.locator("#ef-voice-hint")).to_contain_text("1 voice from ElevenLabs")
+        pw.expect(page.locator("#ef-voice")).to_have_value("__other")
+        assert page.locator("#ef-voice-other").input_value() == "  "
+        page.close()
+    finally:
+        cloud.stop()
+
+
 def test_arrow_keys_browse_the_engine_dropdown_and_enter_switches(live, browser, provider):
     # Browsing a closed select with the arrows fires change in Chromium:
     # it must not switch the engine or leave the page (WCAG 3.2.2).
