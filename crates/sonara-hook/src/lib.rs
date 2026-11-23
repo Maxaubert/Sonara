@@ -158,9 +158,13 @@ fn host_tab(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
 }
 
 /// The session's label: the project it works in (`project_label`, #245;
-/// the walk to `.git` ends at the user's home, `USERPROFILE`).
+/// the walk to `.git` ends at the user's home: `USERPROFILE` on Windows,
+/// `HOME` where that is unset or empty, as on macOS).
 fn label(payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
-    project_label(text(payload, "cwd"), env("USERPROFILE").as_deref())
+    let home = env("USERPROFILE")
+        .filter(|h| !h.is_empty())
+        .or_else(|| env("HOME").filter(|h| !h.is_empty()));
+    project_label(text(payload, "cwd"), home.as_deref())
 }
 
 /// The `agent` messages that carry the session's label (#241).
@@ -675,6 +679,37 @@ mod tests {
         let out = map_event("Stop", &p, &env);
         assert_eq!(out[0]["label"], json!("proj"));
         assert!(asked.get());
+    }
+
+    #[test]
+    fn the_walk_to_git_stops_at_home_when_only_home_is_set() {
+        // macOS has no USERPROFILE: a dotfiles repository in the home must
+        // not name a session outside any repository after the user.
+        let dir = std::env::temp_dir().join(format!("sonara-hook-home-{}", std::process::id()));
+        let home = dir.join("x");
+        std::fs::create_dir_all(home.join(".git")).unwrap();
+        std::fs::write(home.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir_all(home.join("scratch")).unwrap();
+        // Forward slashes, as on macOS.
+        let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        let p = json!({"session_id": "s", "cwd": slash(&home.join("scratch"))});
+        let only_home = |k: &str| (k == "HOME").then(|| slash(&home));
+        assert_eq!(label(&p, &only_home).as_deref(), Some("scratch"));
+        let empty_profile = |k: &str| match k {
+            "USERPROFILE" => Some(String::new()),
+            "HOME" => Some(slash(&home)),
+            _ => None,
+        };
+        assert_eq!(label(&p, &empty_profile).as_deref(), Some("scratch"));
+        // USERPROFILE wins when both are set.
+        let other = dir.join("elsewhere");
+        let both = |k: &str| match k {
+            "USERPROFILE" => Some(slash(&other)),
+            "HOME" => Some(slash(&home)),
+            _ => None,
+        };
+        assert_eq!(label(&p, &both).as_deref(), Some("x"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn ask_payload(n: usize) -> Value {
