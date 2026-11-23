@@ -226,3 +226,16 @@ fn line_numbers_are_said_in_words() {
     // colon after the label is clean.
     assert!(line("x", "py", 1).unwrap().starts_with("Line one: "));
 }
+
+#[test]
+fn a_huge_block_of_words_is_read_in_linear_time() {
+    let code = "ab ".repeat(200_000);
+    let start = std::time::Instant::now();
+    let spoken = line(&code, "ts", 1).unwrap();
+    assert!(spoken.contains("ab"));
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "took {:?}",
+        start.elapsed()
+    );
+}
