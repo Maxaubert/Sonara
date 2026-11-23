@@ -305,8 +305,12 @@ impl G2P {
             // Determine context from next token
             if i < tokens.len() - 1 {
                 let next_word = &tokens[i + 1].text;
-                // Check if next word starts with vowel (simple heuristic)
-                if let Some(first_char) = next_word.chars().next() {
+                // The next token's pass already set `future_vowel` from its
+                // phonemes ("hour" starts with a vowel sound, "user" with a
+                // consonant). Guess from the spelling only when it gave none.
+                if let (None, Some(first_char)) =
+                    (contexts[i].future_vowel, next_word.chars().next())
+                {
                     let first_lower = first_char.to_lowercase().next().unwrap();
                     if "aeiou".contains(first_lower) {
                         contexts[i].future_vowel = Some(true);
