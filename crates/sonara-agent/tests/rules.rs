@@ -2723,6 +2723,21 @@ fn read_mode_final_text_streamed_before_its_lead_in_is_read_once() {
 }
 
 #[test]
+fn read_mode_final_text_held_past_a_permission_is_read_with_its_lead_in() {
+    // A permission prompt is read on its own and keeps the held text: that
+    // text was not spoken, so the lead-in repeating it is read.
+    let mut r = mode_rules(ReadMode::Final);
+    let a = prose(&mut r, "fg", LEAD, 0, true);
+    let b = r.ask("fg", &Ask::new(AskKind::Permission, "Run ls"));
+    let c = r.lead_in("fg", None, LEAD, None).unwrap();
+    let d = r.ask("fg", &question("Which one?", &["A", "B"]));
+    assert_eq!(
+        all_spoken(&[a, b, c, d]),
+        ["!Run ls", LEAD, "!Which one? Option 1: A. Option 2: B."]
+    );
+}
+
+#[test]
 fn text_streamed_before_a_late_lead_in_is_not_read_again() {
     let mut r = rules();
     let a = prose(&mut r, "fg", LEAD, 0, true);

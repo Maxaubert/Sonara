@@ -1027,11 +1027,12 @@ impl Rules {
         let c = self.turn(channel);
         let n = n.min(c.held_prose.len());
         let held: Vec<(String, bool)> = c.held_prose.drain(..n).collect();
-        if c.held_prose.is_empty() {
-            c.said_mark = c.said.len();
-        }
         if held.is_empty() {
             return;
+        }
+        if c.held_prose.is_empty() {
+            // Spoken up to here (a flush of nothing moves nothing).
+            c.said_mark = c.said.len();
         }
         // The prose is in its spoken form already (the text rules ran in
         // the assembler): the reader only cuts it into sentences (#294).
