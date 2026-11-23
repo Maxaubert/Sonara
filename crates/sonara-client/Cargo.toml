@@ -3,6 +3,7 @@ name = "sonara-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Sonara L5 support: the protocol v1 client (home, runtime.json, connect, send, start the runtime) shared by the hook, the CLI and sonarad"
 
 # A leaf: no workspace dependencies and only serde_json, so the L5 adapters

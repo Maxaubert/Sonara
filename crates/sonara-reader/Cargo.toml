@@ -3,6 +3,7 @@ name = "sonara-reader"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [features]
 # Each OS engine is registered only on its own platform.

@@ -3,6 +3,7 @@ name = "sonara-hook"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Sonara L5: the Claude Code hook adapter (hook events to protocol v1 channels and agent messages)"
 
 [[bin]]

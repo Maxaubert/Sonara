@@ -4,6 +4,7 @@ name = "misaki"
 version = "0.6.0-sonara.1"
 edition = "2024"
 license = "MIT"
+repository.workspace = true
 description = "Vendored misaki-rs G2P (US English, no espeak) for Sonara's Kokoro engine"
 publish = false
 

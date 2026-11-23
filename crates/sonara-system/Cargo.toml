@@ -3,6 +3,7 @@ name = "sonara-system"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Sonara L4 (Windows, macOS): duck or pause other apps' audio with crash restore, global hotkeys and the keymap"
 
 [dependencies]
