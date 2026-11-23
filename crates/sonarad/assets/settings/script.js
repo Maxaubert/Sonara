@@ -24,13 +24,22 @@ class ApiError extends Error {}
 
 // ---- navigation and search ----------------------------------------------
 const navButtons = [...document.querySelectorAll(".side-nav button")];
-function showPage(name, focus) {
-  const btn = navButtons.find(b => b.dataset.page === name && !b.hidden && !b.classList.contains("cap-off")) || navButtons[0];
+// The page the last visit left on (#87): read once at startup, applied as soon
+// as its nav button exists, and dropped when the user picks a page first.
+let wantedPage = null;
+try { wantedPage = localStorage.getItem("sonara-page"); } catch (e) {}
+function showPage(name, focus, restore) {
+  cancelCapture();   // #4: a pending hotkey capture ends when the page changes
+  if (!restore) wantedPage = null;
+  const found = navButtons.find(b => b.dataset.page === name && !b.hidden && !b.classList.contains("cap-off"));
+  const btn = found || navButtons[0];
   navButtons.forEach(b => b === btn ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   document.querySelectorAll(".page").forEach(p => p.classList.toggle("active", p.id === btn.dataset.page));
   $("main").scrollTop = 0;
   if (focus) $(btn.dataset.page).querySelector("h1").focus({preventScroll: true});
-  try { localStorage.setItem("sonara-page", btn.dataset.page); } catch (e) {}
+  // A fall-back (a page that is not available yet) is not the user's choice.
+  if (found) { try { localStorage.setItem("sonara-page", btn.dataset.page); } catch (e) {} }
+  return !!found;
 }
 document.querySelectorAll("h1").forEach(h => h.tabIndex = -1);
 navButtons.forEach(b => b.addEventListener("click", () => showPage(b.dataset.page, true)));
@@ -179,6 +188,11 @@ function setText(id, t) {
   const el = $(id);
   if (el && el.textContent !== t) el.textContent = t;
 }
+// The label of a slider: left alone while the slider is held (#86), as setVal
+// leaves the slider itself.
+function setOut(sliderId, outId, t) {
+  if (document.activeElement !== $(sliderId)) setText(outId, t);
+}
 function setDisabled(el, off) {
   if (el.disabled !== off) el.disabled = off;
 }
@@ -293,6 +307,11 @@ function render() {
   engNav.classList.toggle("cap-off", !enginesOn);
   if (!enginesOn && engNav.getAttribute("aria-current") === "page") showPage("speech");
   if (enginesOn) renderEngines();
+  if (enginesOn && wantedPage) {
+    const w = wantedPage;
+    wantedPage = null;
+    showPage(w, false, true);
+  }
 
   // Speech: the engine picker (#227) lists the built-in engines and the
   // added ones, then "Add new engine"; the line below says how it is doing.
@@ -315,7 +334,7 @@ function render() {
   const vopts = voiceOptions(s.engine, true);
   if (s.voice && !vopts.some(o => o[0] === s.voice)) vopts.push([s.voice, s.voice]);
   fillSelect($("voice-select"), vopts, s.voice || "");
-  if (s.rate !== undefined) { setVal("rate", s.rate); setText("rate-out", s.rate + " wpm"); }
+  if (s.rate !== undefined) { setVal("rate", s.rate); setOut("rate", "rate-out", s.rate + " wpm"); }
   document.querySelectorAll(".agent-off").forEach(n => { n.hidden = agentOn; });
   // Rows the summary mode gates are left to renderSummary while the agent is on.
   document.querySelectorAll(".agent-pref").forEach(p => {
@@ -326,8 +345,8 @@ function render() {
     setSegments("verbosity-seg", s.verbosity);
     // Code reading (#295): only where code is read.
     for (const id of ["codespeed-row", "codepause-row", "codestep-row"]) $(id).hidden = s.verbosity === "skip_code";
-    if (s.code_speed !== undefined) { setVal("codespeed", s.code_speed); setText("codespeed-out", s.code_speed + " %"); }
-    if (s.code_pause !== undefined) { setVal("codepause", s.code_pause); setText("codepause-out", seconds(s.code_pause)); }
+    if (s.code_speed !== undefined) { setVal("codespeed", s.code_speed); setOut("codespeed", "codespeed-out", s.code_speed + " %"); }
+    if (s.code_pause !== undefined) { setVal("codepause", s.code_pause); setOut("codepause", "codepause-out", seconds(s.code_pause)); }
     setSegments("codestep-seg", s.code_step);
     setSegments("questionstep-seg", s.question_step);
     setSegments("background-seg", s.background_policy);
@@ -339,7 +358,7 @@ function render() {
   }
 
   // Audio
-  if (s.volume !== undefined) { setVal("volume", s.volume); setText("volume-out", s.volume + " %"); }
+  if (s.volume !== undefined) { setVal("volume", s.volume); setOut("volume", "volume-out", s.volume + " %"); }
   if (s.audio_mode !== undefined) {
     setSegments("audio-seg", s.audio_mode);
     // No duck on this platform: the option is locked and a note says what
@@ -350,7 +369,7 @@ function render() {
     gate($("duck-row"), s.audio_mode !== "duck");
     $("duck-row").hidden = s.audio_mode !== "duck";
   }
-  if (s.duck_level !== undefined) { setVal("duck", s.duck_level); setText("duck-out", s.duck_level + " %"); }
+  if (s.duck_level !== undefined) { setVal("duck", s.duck_level); setOut("duck", "duck-out", s.duck_level + " %"); }
   if (s.earcons) {
     setText("earcons-folder", s.earcons.folder || "None in this runtime");
     $("earcons-folder-box").title = s.earcons.folder || "";
@@ -610,6 +629,8 @@ let activeCapture = null;   // one capture at a time (#38)
 function cancelCapture() {
   if (!activeCapture) return;
   removeEventListener("keydown", activeCapture.handler, true);
+  removeEventListener("blur", activeCapture.handler.leave);
+  activeCapture.row.querySelector(".kbd").removeEventListener("focusout", activeCapture.handler.leave);
   activeCapture.row.classList.remove("listen");
   activeCapture.row.querySelector(".kbd").removeAttribute("aria-pressed");
   activeCapture = null;
@@ -651,8 +672,13 @@ function armCapture(row, action) {
       change("hotkeys", {action, key, mods}, "Shortcut");
     })();
   };
+  // Leaving the chip or the window ends the capture (#4): a later Ctrl+V
+  // elsewhere must not become a global hotkey.
+  h.leave = () => cancelCapture();
   activeCapture = {row, handler: h};
   addEventListener("keydown", h, true);
+  addEventListener("blur", h.leave);
+  row.querySelector(".kbd").addEventListener("focusout", h.leave);
 }
 document.querySelectorAll("[data-action]").forEach(row => {
   const action = row.dataset.action;
@@ -1513,6 +1539,7 @@ function fieldForMessage(msg) {
 }
 
 function openForm(v) {
+  cancelCapture();
   if (v && LOCAL_ONLY_KINDS.includes(v.kind)) return;
   editing = v ? v.id : null;
   formState.auto = {label: !v, id: !v};
@@ -2031,6 +2058,6 @@ $("debuglog-switch").addEventListener("click", () => change("debug_log", state.d
 $("pron-add").addEventListener("click", addPronunciation);
 $("pron-say").addEventListener("keydown", e => { if (e.key === "Enter") addPronunciation(); });
 
-try { const p = localStorage.getItem("sonara-page"); if (p) showPage(p); } catch (e) {}
+if (wantedPage && showPage(wantedPage, false, true)) wantedPage = null;
 refresh();
 setInterval(refresh, 3000);

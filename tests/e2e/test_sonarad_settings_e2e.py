@@ -549,6 +549,110 @@ def test_hotkey_capture_with_the_keyboard(live, browser):
     page.close()
 
 
+def hotkey_posts(page):
+    posts = []
+    page.on("request", lambda r: posts.append(r) if r.method == "POST" and r.url.endswith("/v1/hotkeys") else None)
+    return posts
+
+
+def test_leaving_the_hotkeys_page_ends_a_pending_capture(live, browser):
+    # #4: an armed chip must not swallow the next Ctrl+V on another page and
+    # bind it as a global hotkey.
+    lv = live()
+    page = open_page(browser, lv.url)
+    posts = hotkey_posts(page)
+    before = lv.get("hotkeys")["bindings"]
+    page.click("[data-page=hotkeys]")
+    page.locator("[data-action=pause] .kbd").click()
+    page.wait_for_selector("[data-action=pause].listen")
+    page.click("[data-page=engines]")
+    assert page.locator("[data-action=pause].listen").count() == 0
+    page.keyboard.press("Control+KeyV")
+    page.wait_for_timeout(500)
+    assert posts == []
+    assert lv.get("hotkeys")["bindings"] == before
+    page.close()
+
+
+def test_clicking_another_chip_or_the_same_chip_again_still_works_while_capturing(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=hotkeys]")
+    page.locator("[data-action=pause] .kbd").click()
+    page.wait_for_selector("[data-action=pause].listen")
+    page.locator("[data-action=mute] .kbd").click()
+    page.wait_for_selector("[data-action=mute].listen")
+    assert page.locator("[data-action=pause].listen").count() == 0
+    page.locator("[data-action=mute] .kbd").click()
+    assert page.locator(".listen").count() == 0
+    page.locator("[data-action=mute] .kbd").click()
+    page.wait_for_selector("[data-action=mute].listen")
+    page.keyboard.press("Control+Alt+KeyS")
+
+    def bound():
+        b = {x["action"]: x for x in lv.get("hotkeys")["bindings"]}
+        return b["mute"]["combo"] == combo("Ctrl+Alt+S")
+    assert eventually(bound)
+    page.close()
+
+
+def test_escape_ends_a_capture_and_changes_nothing(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    posts = hotkey_posts(page)
+    before = lv.get("hotkeys")["bindings"]
+    page.click("[data-page=hotkeys]")
+    page.locator("[data-action=pause] .kbd").click()
+    page.wait_for_selector("[data-action=pause].listen")
+    page.keyboard.press("Escape")
+    assert page.locator("[data-action=pause].listen").count() == 0
+    pw.expect(page.locator("#live")).to_have_text("Unchanged.")
+    assert posts == []
+    assert lv.get("hotkeys")["bindings"] == before
+    page.close()
+
+
+def test_a_slider_label_holds_while_the_slider_is_dragged(live, browser):
+    # #86: the 3 s poll must not rewrite the label of a slider that has focus.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.locator("#rate").focus()
+    # An input event only, no change: the thumb is still held and nothing is saved.
+    page.locator("#rate").evaluate("e => { e.value = '300'; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+    pw.expect(page.locator("#rate-out")).to_have_text("300 wpm")
+    page.evaluate("refresh()")
+    page.wait_for_timeout(300)
+    assert page.locator("#rate-out").text_content() == "300 wpm"
+    page.close()
+
+
+def test_the_page_you_left_on_is_remembered_including_engines(live, browser):
+    # #87: Engines is off until the first render, so the stored page used to be
+    # replaced by "speech" at startup.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=engines]")
+    pw.expect(page.locator("#h-engines")).to_be_visible()
+    page.reload()
+    pw.expect(page.locator("#rt-version")).not_to_have_text("–")
+    pw.expect(page.locator("#h-engines")).to_be_visible()
+    assert page.locator("[data-page=engines]").get_attribute("aria-current") == "page"
+    assert page.evaluate("localStorage.getItem('sonara-page')") == "engines"
+    page.close()
+
+
+def test_a_page_picked_before_engines_appear_is_not_taken_back(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=engines]")
+    page.reload()
+    page.click("[data-page=audio]")
+    page.wait_for_timeout(500)
+    assert page.locator("[data-page=audio]").get_attribute("aria-current") == "page"
+    assert page.evaluate("localStorage.getItem('sonara-page')") == "audio"
+    page.close()
+
+
 def test_a_chord_another_action_uses_moves_to_the_new_one(live, browser):
     # #43: one chord, one action. The runtime refuses a second binding of a
     # chord, so the page unbinds the other action once the user agrees.
