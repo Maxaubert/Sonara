@@ -362,3 +362,14 @@ def test_pid_alive_leaves_the_hosts_own_children_to_their_popen(tmp_path):
     time.sleep(0.5)
     pid_alive(proc.pid)
     assert proc.wait(5) == 7
+
+
+def test_requests_use_the_callers_timeout_not_the_connect_cap(home, fake, monkeypatch):
+    """The hello phase is capped by CONNECT_TIMEOUT; later requests are not."""
+    connect_mod = sys.modules["sonara_client.connect"]
+
+    monkeypatch.setattr(connect_mod, "CONNECT_TIMEOUT", 0.2)
+    fake(delays={"voices": 0.5})
+    with _open(home, timeout=3.0) as c:
+        assert c._conn._timeout == 3.0
+        assert c.request("voices")["voices"]

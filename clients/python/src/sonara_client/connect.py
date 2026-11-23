@@ -130,6 +130,9 @@ def _greet(info: dict, hello: dict, require: list, timeout: float) -> Optional[C
     if major != PROTOCOL["major"] or missing:
         conn.close()
         raise _Incompatible(f"it does not offer {', '.join(missing)}" if missing else f"it speaks protocol {major}")
+    # The connect and hello phase was bounded by CONNECT_TIMEOUT; later
+    # requests use the caller's timeout.
+    conn._timeout = timeout
     return Client(conn, info, reply, dial)
 
 

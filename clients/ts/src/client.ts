@@ -195,20 +195,22 @@ export class SonaraClient {
   }
 
   private async openEvents(): Promise<void> {
+    let conn: Connection | undefined;
     try {
-      const conn = await this.dial();
+      conn = await this.dial();
+      const opened = conn;
       if (this.closing) {
-        conn.close();
+        opened.close();
         return;
       }
-      this.eventConn = conn;
-      conn.onEvent = (e) => this.dispatch(e);
-      await conn.request("subscribe", { events: ["state", "items", "log"] });
+      this.eventConn = opened;
+      opened.onEvent = (e) => this.dispatch(e);
+      await opened.request("subscribe", { events: ["state", "items", "log"] });
       // The event connection can drop on its own (the request connection
       // reports through onClose). Once subscribed, tell log listeners, and
       // let the next listener open a new one.
-      conn.onClose = () => {
-        if (this.eventConn === conn) this.eventConn = null;
+      opened.onClose = () => {
+        if (this.eventConn === opened) this.eventConn = null;
         // A new event connection starts with the then current state.
         this.lastState = null;
         if (this.closing || this.conn.closed) return;
@@ -216,6 +218,9 @@ export class SonaraClient {
         for (const cb of [...this.logListeners]) cb({ message: "event stream closed" });
       };
     } catch (err) {
+      // A refused subscribe must not leave its socket open.
+      conn?.close();
+      if (this.eventConn === conn) this.eventConn = null;
       this.eventsFailed = true;
       const message = `event stream failed: ${(err as Error).message}`;
       for (const cb of [...this.logListeners]) cb({ message });
