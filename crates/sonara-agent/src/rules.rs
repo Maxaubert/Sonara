@@ -79,11 +79,16 @@
 //!   only; spoken or held to be spoken, never text a flush skipped or held
 //!   text dropped unspoken), and a lead-in reads only its parts (split at
 //!   blank lines) not found there (whole block, or inside the turn's text
-//!   from `ECHO_MIN` folded characters). A `stream` block after a lead-in
-//!   is held while its text so far is inside a lead-in the lead-in path
-//!   read, and judged when it ends (`final`, the next block) or at a
-//!   decision, a tool or the turn end: a repeat is dropped, anything else
-//!   is read in full. A new turn forgets all of it.
+//!   from `ECHO_MIN` folded characters). A part that starts with a block
+//!   taken (its first deltas came before the lead-in, the last ones after
+//!   it, #286) reads only the rest. A lead-in read already still ends the
+//!   open block, so the sentence the assembler holds is read before the
+//!   question. A `stream` block after a lead-in, or the rest of the block
+//!   open when it came, is held while its text so far is inside a lead-in
+//!   the lead-in path read, and judged when it ends (`final`, the next
+//!   block) or at a decision, a tool or the turn end: a repeat is dropped,
+//!   anything else is read in full. A new turn (`turn_start`, or a woken
+//!   one, `take_new_turn`) forgets all of it.
 //! - **Question sets** (#283): an `ask` carrying `set` (index, size) with a
 //!   size of two or more is one question of a set (Claude Code shows them
 //!   one at a time). Only the first is spoken, as "Question 1 of N." with
@@ -563,6 +568,40 @@ fn paragraphs(text: &str) -> Vec<String> {
 /// turn's blocks `said`, or (from `ECHO_MIN` characters) inside them.
 fn read_already(said: &[String], all: &str, part: &str) -> bool {
     said.iter().any(|s| s == part) || (part.len() >= ECHO_MIN && all.contains(part))
+}
+
+/// A part of a lead-in (folded) starts with one of the turn's blocks
+/// `said` (the first deltas of a block whose last ones come after the
+/// lead-in, #286): the length in folded characters of the longest such
+/// block. A block shorter than `ECHO_MIN` counts only when it is the last
+/// one taken.
+fn said_prefix(said: &[String], part: &str) -> Option<usize> {
+    let last = said.len().checked_sub(1);
+    said.iter()
+        .enumerate()
+        .filter(|(i, s)| {
+            !s.is_empty()
+                && s.len() < part.len()
+                && part.starts_with(s.as_str())
+                && (s.len() >= ECHO_MIN || Some(*i) == last)
+        })
+        .map(|(_, s)| s.chars().count())
+        .max()
+}
+
+/// The raw `text` after its first `n` folded characters, without the
+/// spaces and sentence marks that start it.
+fn rest_after(text: &str, n: usize) -> &str {
+    let mut count = 0;
+    let mut cut = text.len();
+    for (i, c) in text.char_indices() {
+        if count >= n {
+            cut = i;
+            break;
+        }
+        count += c.to_lowercase().filter(|c| c.is_alphanumeric()).count();
+    }
+    text[cut..].trim_start_matches(|c: char| c.is_whitespace() || ".,;:!?".contains(c))
 }
 
 /// A lead-in the lead-in path read, folded: whole and by part.
@@ -1112,18 +1151,33 @@ impl Rules {
         }
         let mut out = Vec::new();
         if !delta.trim().is_empty() {
+            // The last block taken, maybe still open: its later deltas are
+            // checked against this lead-in (`Echo`).
+            let open = self
+                .turns
+                .get(channel)
+                .and_then(|c| c.said.last().cloned())
+                .filter(|s| !s.is_empty());
             if self.settings.read_mode == ReadMode::Final {
                 // First: the held text was never spoken, so the lead-in
-                // that repeats it is read in its place.
+                // that repeats it is read in its place. So is the end of
+                // the open block the assembler holds.
                 self.drop_held(channel, "text before the question");
+                self.turn(channel).assembler = ProseAssembler::new();
             }
             match self.unread(channel, delta) {
-                None => self.note(
-                    Some(channel),
-                    "prose",
-                    "dropped: the question's lead-in was read already".into(),
-                    Some(delta.to_string()),
-                ),
+                None => {
+                    self.note(
+                        Some(channel),
+                        "prose",
+                        "dropped: the question's lead-in was read already".into(),
+                        Some(delta.to_string()),
+                    );
+                    // The lead-in still ends the open block: the sentence
+                    // the assembler holds until whitespace or the block's
+                    // end comes is read now, before the question.
+                    out = self.stream_as(channel, turn, "", 0, true, t, true)?;
+                }
                 Some(text) => {
                     if text != delta {
                         self.note(
@@ -1141,7 +1195,15 @@ impl Rules {
                     let streamed = self.stream_as(channel, turn, &text, 0, true, t, true);
                     self.turn(channel).skip_reply = skip;
                     out = streamed?;
-                    self.turn(channel).lead_in.push(LeadText::new(&text));
+                    // The whole lead-in, its parts read before included:
+                    // a block that repeats it later is dropped.
+                    let c = self.turn(channel);
+                    c.lead_in.push(LeadText::new(delta));
+                    // The open block's later deltas (#286) count with its
+                    // first ones.
+                    if let Some(open) = open.filter(|o| may_echo(&c.lead_in, o)) {
+                        c.echo.block = open;
+                    }
                 }
             }
         }
@@ -1153,30 +1215,48 @@ impl Rules {
 
     /// The parts of the lead-in `delta` the turn has not read (`said`),
     /// joined with a blank line; `delta` itself when it read none of them,
-    /// `None` when it read them all. A part without letters or digits goes
-    /// with the rest: dropped only when every other part was read.
+    /// `None` when it read them all. A part that starts with a block the
+    /// turn read (`said_prefix`) keeps only the rest. A part without
+    /// letters or digits goes with the rest: dropped only when every other
+    /// part was read.
     fn unread(&self, channel: &str, delta: &str) -> Option<String> {
         let said: &[String] = self.turns.get(channel).map_or(&[], |c| &c.said);
         let all = said.concat();
         let parts = paragraphs(delta);
-        let unread: Vec<Option<bool>> = parts
+        // Per part: `None` without letters or digits, else what to read
+        // (`None`: read already).
+        let left: Vec<Option<Option<&str>>> = parts
             .iter()
             .map(|p| {
                 let f = fold(p);
-                (!f.is_empty()).then(|| !read_already(said, &all, &f))
+                if f.is_empty() {
+                    None
+                } else if read_already(said, &all, &f) {
+                    Some(None)
+                } else {
+                    Some(Some(
+                        said_prefix(said, &f).map_or(p.as_str(), |n| rest_after(p, n)),
+                    ))
+                }
             })
             .collect();
-        if !unread.contains(&Some(true)) {
+        if !left.iter().any(|l| matches!(l, Some(Some(_)))) {
             return None;
         }
-        if unread.iter().all(|u| *u != Some(false)) {
+        let whole = parts
+            .iter()
+            .zip(&left)
+            .all(|(p, l)| l.is_none_or(|t| t == Some(p.as_str())));
+        if whole {
             return Some(delta.to_string());
         }
         let kept: Vec<&str> = parts
             .iter()
-            .zip(&unread)
-            .filter(|(_, u)| **u != Some(false))
-            .map(|(p, _)| p.as_str())
+            .zip(&left)
+            .filter_map(|(p, l)| match l {
+                None => Some(p.as_str()),
+                Some(t) => *t,
+            })
             .collect();
         Some(kept.join("\n\n"))
     }
@@ -1528,6 +1608,8 @@ impl Rules {
             let folded = fold(&delta);
             match c.said.last_mut() {
                 Some(s) if index != 0 => s.push_str(&folded),
+                // The empty end of a block a dropped lead-in closes.
+                _ if delta.is_empty() => {}
                 _ => c.said.push(folded),
             }
             for ch in c.assembler.feed(&delta, index, is_final) {
@@ -2191,6 +2273,13 @@ impl Rules {
                 c.last_index = None;
                 c.reply = None;
                 c.replied = None;
+                // What the last reply read and asked (module docs,
+                // "Lead-in once"): the new reply starts without it.
+                c.lead_in.clear();
+                c.echo = Echo::default();
+                c.said.clear();
+                c.said_mark = 0;
+                c.asked.clear();
                 true
             }
             _ => false,

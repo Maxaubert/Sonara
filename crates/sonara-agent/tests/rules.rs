@@ -2899,6 +2899,139 @@ fn a_flushed_text_s_lead_in_is_still_read() {
     assert_eq!(spoken(&r.lead_in("fg", None, LEAD, None).unwrap()), [LEAD]);
 }
 
+/// The real `MessageDisplay` shape (`tests/fixtures/MessageDisplay.json`):
+/// the block's last sentence has no whitespace after it, so the assembler
+/// holds it until the block ends.
+const OPEN: &str = "Here is the first sentence. And a second.";
+
+/// The prose spoken (decisions left out), joined with a space.
+fn prose_said(batches: &[Vec<Action>]) -> String {
+    all_spoken(batches)
+        .into_iter()
+        .filter(|s| !s.starts_with('!'))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[test]
+fn an_open_block_is_read_whole_before_the_question_when_its_lead_in_is_dropped() {
+    // Review of #393: the dropped lead-in still ends the open block, so its
+    // held last sentence is read once, before the question.
+    for (mode, minqueue) in [
+        (ReadMode::Queue, 1),
+        (ReadMode::Queue, 5),
+        (ReadMode::Immediate, 1),
+        (ReadMode::Done, 1),
+        (ReadMode::Final, 1),
+    ] {
+        for split in [false, true] {
+            let mut r = rules();
+            r.settings.read_mode = mode;
+            r.settings.minqueue = minqueue;
+            let mut said = if split {
+                vec![
+                    prose(&mut r, "fg", "Here is the first ", 0, false),
+                    prose(&mut r, "fg", "sentence. And a second.", 1, false),
+                ]
+            } else {
+                vec![prose(&mut r, "fg", OPEN, 0, false)]
+            };
+            said.push(r.lead_in("fg", None, OPEN, None).unwrap());
+            said.push(r.ask("fg", &question("Which one?", &["A", "B"])));
+            let all = all_spoken(&said);
+            assert_eq!(
+                all.last().map(String::as_str),
+                Some("!Which one? Option 1: A. Option 2: B."),
+                "{mode:?} minqueue {minqueue} split {split}: {all:?}"
+            );
+            assert_eq!(
+                prose_said(&said),
+                OPEN,
+                "{mode:?} minqueue {minqueue} split {split}: {all:?}"
+            );
+            // Nothing of it comes later.
+            assert!(
+                spoken(&r.turn_end("fg", None, None).unwrap()).is_empty(),
+                "{mode:?} minqueue {minqueue} split {split}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_lead_in_after_the_first_deltas_of_its_block_reads_only_the_rest() {
+    // #286: the last delta of the block can come after PreToolUse.
+    for mode in [ReadMode::Queue, ReadMode::Immediate, ReadMode::Done] {
+        let mut r = rules();
+        r.settings.read_mode = mode;
+        let a = prose(&mut r, "fg", "Here is the first sentence. ", 0, false);
+        let b = r.lead_in("fg", None, OPEN, None).unwrap();
+        let c = r.ask("fg", &question("Which one?", &["A", "B"]));
+        let d = prose(&mut r, "fg", "And a second.", 1, true);
+        let e = r.turn_end("fg", None, None).unwrap();
+        let all = all_spoken(&[a.clone(), b.clone(), c.clone()]);
+        assert_eq!(
+            all.last().map(String::as_str),
+            Some("!Which one? Option 1: A. Option 2: B."),
+            "{mode:?}: {all:?}"
+        );
+        assert_eq!(prose_said(&[a, b, c, d, e]), OPEN, "{mode:?}");
+        assert!(notes_of(&r, "fg").contains(
+            &"prose: read in part: the rest of the question's lead-in was read already".to_string()
+        ));
+    }
+}
+
+#[test]
+fn a_lead_in_after_a_block_cut_mid_sentence_is_read_once() {
+    let mut r = rules();
+    let a = prose(&mut r, "fg", "Here is the first sentence. And a", 0, false);
+    let b = r.lead_in("fg", None, OPEN, None).unwrap();
+    let c = r.ask("fg", &question("Which one?", &["A", "B"]));
+    let d = prose(&mut r, "fg", " second.", 1, true);
+    let e = r.turn_end("fg", None, None).unwrap();
+    assert_eq!(prose_said(&[a, b, c, d, e]), OPEN);
+}
+
+#[test]
+fn read_mode_final_a_lead_in_after_the_first_deltas_is_read_once() {
+    // The held text is dropped for the lead-in, the open block's tail too.
+    let mut r = mode_rules(ReadMode::Final);
+    let a = prose(&mut r, "fg", "Here is the first sentence. And a", 0, false);
+    let b = r.lead_in("fg", None, OPEN, None).unwrap();
+    let c = r.ask("fg", &question("Which one?", &["A", "B"]));
+    let d = prose(&mut r, "fg", " second.", 1, true);
+    let e = r.turn_end("fg", None, None).unwrap();
+    assert_eq!(prose_said(&[a, b, c, d, e]), OPEN);
+}
+
+#[test]
+fn a_woken_turn_reads_a_lead_in_the_last_turn_said() {
+    // #243: a turn that starts without a turn_start forgets the last
+    // reply's text, as turn_start does.
+    let mut r = rules();
+    let a = prose(&mut r, "fg", LEAD, 0, true);
+    r.turn_end("fg", None, None).unwrap();
+    assert!(r.take_new_turn("fg"));
+    let b = r.lead_in("fg", None, LEAD, None).unwrap();
+    assert_eq!(all_spoken(&[a, b]), [LEAD, LEAD]);
+}
+
+#[test]
+fn a_woken_turn_forgets_the_last_turn_s_questions() {
+    let mut r = rules();
+    let q = with_id(question("Which one?", &["A", "B"]), "toolu_1");
+    r.ask("fg", &q);
+    r.answered("fg");
+    r.turn_end("fg", None, None).unwrap();
+    assert!(r.repeated_ask("fg", &q), "the same turn still knows it");
+    assert!(r.take_new_turn("fg"));
+    assert!(!r.repeated_ask("fg", &q));
+}
+
 #[test]
 fn the_same_question_twice_is_read_once() {
     // A batch the hook sent twice (a slow reply, audit 2026-11-23).
