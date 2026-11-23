@@ -9,14 +9,10 @@ from __future__ import annotations
 
 import time
 
+from harness import ok
+
 SECRET = "sk-conformance-secret-0123456789"
 TEXT = "First sentence here. Second sentence here. Third sentence here."
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
 
 
 def use_profile(c, profile):

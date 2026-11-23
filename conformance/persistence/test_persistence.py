@@ -9,13 +9,7 @@ from __future__ import annotations
 
 import json
 
-from harness import long_text
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
+from harness import long_text, ok
 
 
 def get(c, key):

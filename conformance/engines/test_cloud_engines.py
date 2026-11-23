@@ -11,14 +11,10 @@ import sys
 import pytest
 from fakes import FakeCloud
 
+from harness import ok
+
 SECRET = "cloud-conformance-secret-0123456789"
 KINDS = ["elevenlabs", "azure", "google", "gemini", "cartesia", "deepgram"]
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
 
 
 @pytest.fixture(params=KINDS)

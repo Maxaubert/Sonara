@@ -13,19 +13,13 @@ import time
 
 import pytest
 from fakes import FakeCloud
-from harness import wait_until
+from harness import ok, wait_until
 
 SECRET = "cloud-conformance-secret-0123456789"
 WORDS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
          "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen"]
 SENTENCES = [f"This is line {w}." for w in WORDS]
 REPLY = " ".join(SENTENCES[:9]) + "\n\n" + " ".join(SENTENCES[9:])
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
 
 
 @pytest.fixture
