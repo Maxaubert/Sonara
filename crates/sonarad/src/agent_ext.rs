@@ -202,6 +202,9 @@ pub fn ask(a: &Agent, m: &Map<String, Value>) -> Handled {
     // Its lead-in comes later (protocol 1.16, #360).
     ask.lead_in_pending = opt_flag(m, "lead_in_pending")?;
     ask.lead_in_id = owned("lead_in_id")?;
+    // The same question of the same tool use again is dropped (additive,
+    // no protocol minor).
+    ask.tool_use_id = owned("tool_use_id")?;
     a.ask(ch, &ask).map_err(failure)?;
     ok(Map::new())
 }
@@ -923,6 +926,22 @@ mod tests {
         }
         let r = call(&s, &mut a, json!({"type": "channel_close", "channel": "a"}));
         assert_eq!(code(&r), "E_NOT_FOUND");
+    }
+
+    #[test]
+    fn an_ask_takes_an_optional_string_tool_use_id() {
+        let (s, mut a) = enabled();
+        let ask = |id: Value| {
+            json!({"type": "ask", "channel": "a", "kind": "question", "text": "Go?",
+                   "tool_use_id": id})
+        };
+        let r = call(&s, &mut a, ask(json!("toolu_1")));
+        assert_eq!(r["ok"], true, "{r}");
+        // The same question again is accepted (and dropped by the rules).
+        let r = call(&s, &mut a, ask(json!("toolu_1")));
+        assert_eq!(r["ok"], true, "{r}");
+        let r = call(&s, &mut a, ask(json!(7)));
+        assert_eq!(code(&r), "E_BAD_REQUEST", "{r}");
     }
 
     #[test]

@@ -436,6 +436,16 @@ fn map_unlabelled(
                         out.push(Value::Object(lead_in_stream(channel, t)));
                     }
                     let mut asks = questions(channel, input);
+                    let id = text(payload, "tool_use_id");
+                    if !id.is_empty() {
+                        // The runtime drops the same question again (a
+                        // batch delivered twice).
+                        for a in &mut asks {
+                            if let Value::Object(m) = a {
+                                m.insert("tool_use_id".into(), json!(id));
+                            }
+                        }
+                    }
                     if let (Lead::Later, Some(Value::Object(first))) = (&lead, asks.first_mut()) {
                         // Not on disk yet: the follow-up sends it (#360).
                         first.insert("lead_in_pending".into(), json!(true));
@@ -754,6 +764,21 @@ mod tests {
         }
         let one = map_event("PreToolUse", &ask_payload(1), &|_| None);
         assert!(one[0].get("set_index").is_none() && one[0].get("hint").is_some());
+    }
+
+    #[test]
+    fn every_question_of_a_set_carries_its_tool_use_id() {
+        // The runtime drops the same question again (a batch sent twice).
+        let out = map_event("PreToolUse", &ask_payload(3), &|_| None);
+        assert!(out.iter().all(|m| m["tool_use_id"] == "toolu_1"), "{out:?}");
+        // None in the payload: none sent.
+        let mut p = ask_payload(2);
+        p["tool_use_id"] = json!("");
+        let out = map_event("PreToolUse", &p, &|_| None);
+        assert!(
+            out.iter().all(|m| m.get("tool_use_id").is_none()),
+            "{out:?}"
+        );
     }
 
     #[test]

@@ -2669,3 +2669,260 @@ fn a_question_s_lead_in_is_read_even_in_a_flushed_reply() {
     // Prose after it is still skipped.
     assert!(spoken(&prose(&mut r, "fg", "Still skipped. ", 0, true)).is_empty());
 }
+
+// -- a question's lead-in is read once, whatever the order ----------------
+
+const LEAD: &str = "Two ways to go here, pick the one you like.";
+
+fn all_spoken(batches: &[Vec<Action>]) -> Vec<String> {
+    batches.iter().flat_map(|a| spoken(a)).collect()
+}
+
+fn with_id(mut a: Ask, id: &str) -> Ask {
+    a.tool_use_id = Some(id.to_string());
+    a
+}
+
+#[test]
+fn text_streamed_before_its_lead_in_is_read_once() {
+    // The macOS report (2026-11-23): MessageDisplay brought the text before
+    // the question first, then PreToolUse sent it again as the lead-in.
+    for (mode, minqueue) in [
+        (ReadMode::Queue, 1),
+        (ReadMode::Queue, 5),
+        (ReadMode::Immediate, 1),
+        (ReadMode::Done, 1),
+    ] {
+        let mut r = rules();
+        r.settings.read_mode = mode;
+        r.settings.minqueue = minqueue;
+        let a = prose(&mut r, "fg", LEAD, 0, true);
+        let b = r.lead_in("fg", None, LEAD, None).unwrap();
+        let c = r.ask("fg", &question("Which one?", &["A", "B"]));
+        assert_eq!(
+            all_spoken(&[a, b, c]),
+            [LEAD, "!Which one? Option 1: A. Option 2: B."],
+            "{mode:?} minqueue {minqueue}"
+        );
+        assert!(notes_of(&r, "fg")
+            .contains(&"prose: dropped: the question's lead-in was read already".to_string()));
+    }
+}
+
+#[test]
+fn read_mode_final_text_streamed_before_its_lead_in_is_read_once() {
+    // The held text was never spoken: the lead-in is read in its place.
+    let mut r = mode_rules(ReadMode::Final);
+    let a = prose(&mut r, "fg", LEAD, 0, true);
+    let b = r.lead_in("fg", None, LEAD, None).unwrap();
+    let c = r.ask("fg", &question("Which one?", &["A", "B"]));
+    assert_eq!(
+        all_spoken(&[a, b, c]),
+        [LEAD, "!Which one? Option 1: A. Option 2: B."]
+    );
+}
+
+#[test]
+fn text_streamed_before_a_late_lead_in_is_not_read_again() {
+    let mut r = rules();
+    let a = prose(&mut r, "fg", LEAD, 0, true);
+    assert_eq!(spoken(&a), [LEAD]);
+    assert!(spoken(&r.ask("fg", &pending_question("Go?", "q1"))).is_empty());
+    // The question goes at once, its lead-in not read again.
+    assert_eq!(
+        late(&mut r, LEAD, "q1"),
+        ["!Go? Option 1: Yes. Option 2: No."]
+    );
+}
+
+#[test]
+fn a_lead_in_repeated_as_several_deltas_is_not_read_again() {
+    for last_final in [true, false] {
+        let mut r = rules();
+        let a = r.lead_in("fg", None, LEAD, None).unwrap();
+        let b = r.ask("fg", &question("Which one?", &["A", "B"]));
+        assert_eq!(
+            all_spoken(&[a, b]),
+            [LEAD, "!Which one? Option 1: A. Option 2: B."]
+        );
+        // MessageDisplay brings it as deltas (the captured macOS fixture
+        // ends a block with final false).
+        let c = prose(&mut r, "fg", "Two ways to go ", 0, false);
+        let d = prose(&mut r, "fg", "here, pick the one ", 1, false);
+        let e = prose(&mut r, "fg", "you like.", 2, last_final);
+        assert!(all_spoken(&[c, d, e]).is_empty(), "final {last_final}");
+        // Other text later in the turn is read.
+        assert_eq!(
+            spoken(&prose(&mut r, "fg", "Something new. ", 0, true)),
+            ["Something new."],
+            "final {last_final}"
+        );
+    }
+}
+
+#[test]
+fn a_lead_in_repeated_out_of_order_is_not_read_again() {
+    // #286: each delta is its own hook process.
+    let mut r = rules();
+    r.lead_in("fg", None, LEAD, None).unwrap();
+    r.ask("fg", &question("Which one?", &["A", "B"]));
+    let a = prose(&mut r, "fg", "Two ways to go ", 0, false);
+    let b = prose(&mut r, "fg", "you like.", 2, true);
+    let c = prose(&mut r, "fg", "here, pick the one ", 1, false);
+    assert!(all_spoken(&[a, b, c]).is_empty());
+}
+
+#[test]
+fn a_block_that_only_starts_like_the_lead_in_is_read_whole() {
+    let mut r = rules();
+    r.lead_in(
+        "fg",
+        None,
+        "Let me check the configuration file for errors.",
+        None,
+    )
+    .unwrap();
+    r.ask("fg", &question("Go?", &["A"]));
+    let a = prose(
+        &mut r,
+        "fg",
+        "Let me check the configuration file ",
+        0,
+        false,
+    );
+    let b = prose(&mut r, "fg", "again later.", 1, true);
+    assert_eq!(
+        all_spoken(&[a, b]),
+        ["Let me check the configuration file again later."]
+    );
+}
+
+#[test]
+fn a_block_held_as_a_possible_repeat_is_read_at_the_next_decision() {
+    // Nothing is stranded: the block never ended, the decision judges it.
+    let mut r = rules();
+    r.lead_in("fg", None, "Done here. Two ways to go now.", None)
+        .unwrap();
+    r.ask("fg", &question("Which one?", &["A", "B"]));
+    r.answered("fg");
+    assert!(spoken(&prose(&mut r, "fg", "Done here. ", 0, false)).is_empty());
+    let a = r.ask("fg", &question("Next?", &["A"]));
+    assert_eq!(spoken(&a), ["Done here.", "!Next? Option 1: A."]);
+}
+
+#[test]
+fn a_lead_in_of_two_streamed_blocks_is_not_read_again() {
+    let mut r = rules();
+    let a = prose(&mut r, "fg", "First block, with enough words.", 0, true);
+    let b = prose(&mut r, "fg", "Second block, also long enough.", 0, true);
+    let c = r
+        .lead_in(
+            "fg",
+            None,
+            "First block, with enough words.\n\nSecond block, also long enough.",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        all_spoken(&[a, b, c]),
+        [
+            "First block, with enough words.",
+            "Second block, also long enough."
+        ]
+    );
+}
+
+#[test]
+fn only_the_unread_block_of_a_lead_in_is_read() {
+    let mut r = rules();
+    let a = prose(&mut r, "fg", "First block, with enough words.", 0, true);
+    let b = r
+        .lead_in(
+            "fg",
+            None,
+            "First block, with enough words.\n\nSecond block, also long enough.",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        all_spoken(&[a, b]),
+        [
+            "First block, with enough words.",
+            "Second block, also long enough."
+        ]
+    );
+}
+
+#[test]
+fn a_short_lead_in_inside_longer_text_is_still_read() {
+    let mut r = rules();
+    let a = prose(&mut r, "fg", "OK, a longer other sentence here.", 0, true);
+    let b = r.lead_in("fg", None, "OK.", None).unwrap();
+    assert_eq!(
+        all_spoken(&[a, b]),
+        ["okay, a longer other sentence here.", "okay."]
+    );
+}
+
+#[test]
+fn the_same_lead_in_in_the_next_turn_is_read_again() {
+    let mut r = rules();
+    let a = prose(&mut r, "fg", LEAD, 0, true);
+    r.turn_start("fg", None, None).unwrap();
+    let b = r.lead_in("fg", None, LEAD, None).unwrap();
+    assert_eq!(all_spoken(&[a, b]), [LEAD, LEAD]);
+}
+
+#[test]
+fn a_flushed_text_s_lead_in_is_still_read() {
+    // Skipped text never counts as read (#228): the lead-in belongs to its
+    // question.
+    let mut r = rules();
+    prose(&mut r, "fg", "Old text. ", 0, true);
+    r.flush("fg");
+    assert!(spoken(&prose(&mut r, "fg", LEAD, 0, true)).is_empty());
+    assert_eq!(spoken(&r.lead_in("fg", None, LEAD, None).unwrap()), [LEAD]);
+}
+
+#[test]
+fn the_same_question_twice_is_read_once() {
+    // A batch the hook sent twice (a slow reply, audit 2026-11-23).
+    let mut r = rules();
+    let q = with_id(question("Which one?", &["A", "B"]), "toolu_1");
+    let a = r.ask("fg", &q);
+    assert!(r.repeated_ask("fg", &q));
+    let b = r.ask("fg", &q);
+    assert_eq!(earcons(&a), [Earcon::Choice]);
+    assert!(b.is_empty(), "no earcon, no text: {b:?}");
+    assert_eq!(spoken(&a), ["!Which one? Option 1: A. Option 2: B."]);
+    assert!(notes_of(&r, "fg").contains(&"question: dropped: the same question again".to_string()));
+    // A new turn's question with that id again is read.
+    r.turn_start("fg", None, None).unwrap();
+    assert!(!r.repeated_ask("fg", &q));
+    assert_eq!(spoken(&r.ask("fg", &q)).len(), 1);
+}
+
+#[test]
+fn the_questions_of_a_set_with_one_tool_use_all_count() {
+    let mut r = rules();
+    let mut said = Vec::new();
+    for i in 0..2 {
+        let mut q = with_id(question(&format!("Question {i}?"), &["A"]), "toolu_1");
+        q.set = Some((i, 2));
+        said.extend(spoken(&r.ask("fg", &q)));
+    }
+    assert_eq!(said.len(), 2, "{said:?}");
+    // The set again adds nothing.
+    let mut q = with_id(question("Question 0?", &["A"]), "toolu_1");
+    q.set = Some((0, 2));
+    assert!(r.ask("fg", &q).is_empty());
+}
+
+#[test]
+fn a_question_without_a_tool_use_id_is_never_a_repeat() {
+    let mut r = rules();
+    let q = question("Go?", &["A"]);
+    assert_eq!(spoken(&r.ask("fg", &q)).len(), 1);
+    r.answered("fg");
+    assert_eq!(spoken(&r.ask("fg", &q)).len(), 1);
+}

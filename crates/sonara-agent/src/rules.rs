@@ -68,7 +68,22 @@
 //!   fires is then dropped, earcon and text, and consumes the mark (#11).
 //!   A permission otherwise plays `permission`; a plan has no earcon (the
 //!   user removed it). A tool running, an answer or a new turn clears the
-//!   mark.
+//!   mark. An `ask` with a `tool_use_id` whose question (that id and its
+//!   place in the set) was applied already this turn is dropped, earcon
+//!   and text (a batch delivered twice).
+//! - **Lead-in once.** The text before a question reaches the runtime up
+//!   to three times, in any order: `MessageDisplay` blocks (`stream`), the
+//!   hook's `lead_in` (its message's text blocks joined with a blank line)
+//!   and the late lead-in (#360). It is voiced exactly once: the turn keeps
+//!   each block taken for reading (raw text folded, letters and digits
+//!   only; spoken or held to be spoken, never text a flush skipped or held
+//!   text dropped unspoken), and a lead-in reads only its parts (split at
+//!   blank lines) not found there (whole block, or inside the turn's text
+//!   from `ECHO_MIN` folded characters). A `stream` block after a lead-in
+//!   is held while its text so far is inside a lead-in the lead-in path
+//!   read, and judged when it ends (`final`, the next block) or at a
+//!   decision, a tool or the turn end: a repeat is dropped, anything else
+//!   is read in full. A new turn forgets all of it.
 //! - **Question sets** (#283): an `ask` carrying `set` (index, size) with a
 //!   size of two or more is one question of a set (Claude Code shows them
 //!   one at a time). Only the first is spoken, as "Question 1 of N." with
@@ -197,9 +212,6 @@ struct LeadInWait {
     gen: u64,
     /// The question's `lead_in_id`.
     id: Option<String>,
-    /// The texts (folded) of the whole blocks that came while it waited:
-    /// a lead-in with the same text was read already.
-    seen: Vec<String>,
 }
 
 /// How long a question whose lead-in comes later (`lead_in_pending`, #360)
@@ -392,6 +404,9 @@ pub struct Ask {
     /// The id that ties the late lead-in to this question (the hook: the
     /// tool use's id): a late lead-in with another id is dropped.
     pub lead_in_id: Option<String>,
+    /// The tool use that asked it (the hook: `AskUserQuestion`'s id): the
+    /// same question of the same tool use again in the turn is dropped.
+    pub tool_use_id: Option<String>,
 }
 
 impl Ask {
@@ -407,7 +422,15 @@ impl Ask {
             set: None,
             lead_in_pending: false,
             lead_in_id: None,
+            tool_use_id: None,
         }
+    }
+
+    /// What makes it the same question again: its tool use and its place
+    /// in the set. `None` without a tool use id.
+    fn key(&self) -> Option<(String, usize)> {
+        let id = self.tool_use_id.as_deref().filter(|id| !id.is_empty())?;
+        Some((id.to_string(), self.set.map_or(0, |(i, _)| i)))
     }
 }
 
@@ -507,6 +530,93 @@ fn fold(s: &str) -> String {
         .collect()
 }
 
+/// A question's lead-in and the turn's text are matched by containment
+/// once folded (module docs, "Lead-in once"): a folded text shorter than
+/// this matches only a whole block or a whole part of the lead-in, so a
+/// short "OK." is never taken for a part of a longer text by chance.
+const ECHO_MIN: usize = 20;
+
+/// The parts of a lead-in: the hook joins the text blocks of the
+/// question's message with a blank line (`sonara-hook` `transcript.rs`).
+fn paragraphs(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        if !cur.is_empty() {
+            cur.push('\n');
+        }
+        cur.push_str(line);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// A part of a lead-in (folded) was read already: it is one of the
+/// turn's blocks `said`, or (from `ECHO_MIN` characters) inside them.
+fn read_already(said: &[String], all: &str, part: &str) -> bool {
+    said.iter().any(|s| s == part) || (part.len() >= ECHO_MIN && all.contains(part))
+}
+
+/// A lead-in the lead-in path read, folded: whole and by part.
+#[derive(Debug, Clone, Default)]
+struct LeadText {
+    whole: String,
+    parts: Vec<String>,
+}
+
+impl LeadText {
+    fn new(text: &str) -> LeadText {
+        LeadText {
+            whole: fold(text),
+            parts: paragraphs(text).iter().map(|p| fold(p)).collect(),
+        }
+    }
+}
+
+/// The block so far (folded) may still turn out to be one of the lead-ins.
+fn may_echo(leads: &[LeadText], block: &str) -> bool {
+    leads.iter().any(|l| l.whole.contains(block))
+}
+
+/// The block (folded) repeats one of the lead-ins: inside it from
+/// `ECHO_MIN` characters, else equal to it or to one of its parts.
+fn echoes(leads: &[LeadText], block: &str) -> bool {
+    !block.is_empty()
+        && leads.iter().any(|l| {
+            l.whole.contains(block)
+                && (block.len() >= ECHO_MIN
+                    || l.whole == block
+                    || l.parts.iter().any(|p| p == block))
+        })
+}
+
+/// The `MessageDisplay` copy of a lead-in (module docs, "Lead-in once"):
+/// the deltas of the block being streamed, held while the block's text so
+/// far is inside a lead-in already read. The block is judged when it ends
+/// (its `final`, the next block) or at a release point (a decision, a
+/// tool, the turn end): a repeat is dropped, anything else is replayed in
+/// order, so nothing of a block that only starts like the lead-in is lost.
+#[derive(Debug, Default)]
+struct Echo {
+    /// The block's text so far, folded.
+    block: String,
+    /// Its deltas held until it is judged.
+    held: Vec<Delta>,
+    /// Not a repeat: its deltas go on.
+    passing: bool,
+    /// Judged a repeat at a release point: its deltas that still fit the
+    /// lead-in are dropped too.
+    dropped: bool,
+}
+
 /// Which of `texts` the screen's `shown` is: equal once folded, else the
 /// one starting with it (a cut-off screen, at least 20 characters).
 fn match_text(texts: &[Option<String>], shown: &str) -> Option<usize> {
@@ -560,10 +670,22 @@ struct Turn {
     /// A question set read in order (`question_step` off, #320): each
     /// question its own entry, for the screen follower (#323).
     read_set: Option<ReadSet>,
-    /// The lead-in the hook sent with a question (#323, its text folded):
+    /// The lead-ins of the turn's questions the lead-in path read (#323):
     /// the same text from `MessageDisplay` later in the turn is not read
-    /// again.
-    lead_in: Option<String>,
+    /// again (`echo`). Kept until the turn ends.
+    lead_in: Vec<LeadText>,
+    /// The `MessageDisplay` block that may repeat a lead-in (`Echo`).
+    echo: Echo,
+    /// The turn's text blocks taken for reading, raw text folded, one entry
+    /// per block (a block's deltas appended in index order): spoken, or held
+    /// to be spoken. A question's lead-in drops the parts found here.
+    said: Vec<String>,
+    /// How many of `said` were spoken (nothing held after them): dropping
+    /// the held prose forgets the entries after it, never spoken.
+    said_mark: usize,
+    /// The questions applied this turn, by tool use and place in the set:
+    /// the same one again is dropped.
+    asked: Vec<(String, usize)>,
     /// Decisions wait in `pending` for a late lead-in (#360).
     lead_in_wait: Option<LeadInWait>,
     /// The final reply the hook sent with `Stop` (`read_mode` `final`),
@@ -623,7 +745,11 @@ impl Turn {
             hinted: false,
             questions: None,
             read_set: None,
-            lead_in: None,
+            lead_in: Vec::new(),
+            echo: Echo::default(),
+            said: Vec::new(),
+            said_mark: 0,
+            asked: Vec::new(),
             lead_in_wait: None,
             reply: None,
             replied: None,
@@ -755,6 +881,16 @@ impl Rules {
         self.turns.get(channel).is_some_and(|t| t.awaiting)
     }
 
+    /// `ask` would drop it as the same question again (its tool use and
+    /// place in the set were applied this turn): it starts no new turn.
+    pub fn repeated_ask(&self, channel: &str, ask: &Ask) -> bool {
+        ask.key().is_some_and(|k| {
+            self.turns
+                .get(channel)
+                .is_some_and(|c| c.asked.contains(&k))
+        })
+    }
+
     fn summaries(&self) -> bool {
         self.settings.summaries.enabled
     }
@@ -822,6 +958,20 @@ impl Rules {
         let c = self.turn(channel);
         let n = std::mem::take(&mut c.held_prose).len();
         let deltas = c.order.release().len();
+        let echo = std::mem::take(&mut c.echo).held.len();
+        if n > 0 {
+            // Never spoken: a lead-in with the same text is read.
+            let mark = c.said_mark;
+            c.said.truncate(mark);
+        }
+        if echo > 0 {
+            self.note(
+                Some(channel),
+                "prose",
+                format!("dropped: {echo} delta(s) held as a possible repeat of a lead-in ({why})"),
+                None,
+            );
+        }
         if n > 0 {
             let mode = self.settings.read_mode.as_str();
             self.note(
@@ -877,6 +1027,9 @@ impl Rules {
         let c = self.turn(channel);
         let n = n.min(c.held_prose.len());
         let held: Vec<(String, bool)> = c.held_prose.drain(..n).collect();
+        if c.held_prose.is_empty() {
+            c.said_mark = c.said.len();
+        }
         if held.is_empty() {
             return;
         }
@@ -900,11 +1053,10 @@ impl Rules {
 
     // -- messages ---------------------------------------------------------
 
-    /// A delta of streamed prose (`index` numbers the deltas of a block,
-    /// restarting at 0 for a new block; `final` ends the block).
     /// The lead-in of a question from the hook (#323, `stream` with
-    /// `lead_in`): read as prose, and remembered so the same text from
-    /// `MessageDisplay` later in the turn is dropped.
+    /// `lead_in`): read as prose, once (module docs, "Lead-in once"): its
+    /// parts the turn read already are dropped, and the same text from
+    /// `MessageDisplay` later in the turn is dropped too.
     pub fn lead_in(
         &mut self,
         channel: &str,
@@ -919,7 +1071,8 @@ impl Rules {
     /// `lead_in` and `lead_in_id`): read first only while the question with
     /// that id waits, then the question goes; an empty one reads nothing
     /// and lets it go. Any other (its question answered, read already, or
-    /// another one) is dropped.
+    /// another one) is dropped. Its parts the turn read already are not
+    /// read again, as for `lead_in`.
     pub fn late_lead_in(
         &mut self,
         channel: &str,
@@ -942,13 +1095,11 @@ impl Rules {
         if self.turns.get(channel).is_some_and(|c| c.stale(turn, t)) {
             return Err(Stale);
         }
-        let folded = fold(delta);
-        let wait = self
+        let waiting = self
             .turns
             .get(channel)
-            .and_then(|c| c.lead_in_wait.as_ref());
-        let waiting = wait.is_some_and(|w| id.is_none() || w.id.as_deref() == id);
-        let seen = wait.is_some_and(|w| w.seen.contains(&folded));
+            .and_then(|c| c.lead_in_wait.as_ref())
+            .is_some_and(|w| id.is_none() || w.id.as_deref() == id);
         if id.is_some() && !waiting {
             self.note(
                 Some(channel),
@@ -959,29 +1110,74 @@ impl Rules {
             return Ok(Vec::new());
         }
         let mut out = Vec::new();
-        if seen && !folded.is_empty() {
-            self.note(
-                Some(channel),
-                "prose",
-                "dropped: the late lead-in was read already (#360)".into(),
-                Some(delta.to_string()),
-            );
-        } else if !delta.trim().is_empty() {
+        if !delta.trim().is_empty() {
             if self.settings.read_mode == ReadMode::Final {
+                // First: the held text was never spoken, so the lead-in
+                // that repeats it is read in its place.
                 self.drop_held(channel, "text before the question");
             }
-            // It belongs to its question: read even in a flushed reply,
-            // whose other text stays skipped (Spectra, 2026-10-26).
-            let skip = std::mem::take(&mut self.turn(channel).skip_reply);
-            let streamed = self.stream(channel, turn, delta, 0, true, t);
-            self.turn(channel).skip_reply = skip;
-            out = streamed?;
-            self.turn(channel).lead_in = Some(folded);
+            match self.unread(channel, delta) {
+                None => self.note(
+                    Some(channel),
+                    "prose",
+                    "dropped: the question's lead-in was read already".into(),
+                    Some(delta.to_string()),
+                ),
+                Some(text) => {
+                    if text != delta {
+                        self.note(
+                            Some(channel),
+                            "prose",
+                            "read in part: the rest of the question's lead-in was read already"
+                                .into(),
+                            Some(text.clone()),
+                        );
+                    }
+                    // It belongs to its question: read even in a flushed
+                    // reply, whose other text stays skipped (Spectra,
+                    // 2026-10-26).
+                    let skip = std::mem::take(&mut self.turn(channel).skip_reply);
+                    let streamed = self.stream_as(channel, turn, &text, 0, true, t, true);
+                    self.turn(channel).skip_reply = skip;
+                    out = streamed?;
+                    self.turn(channel).lead_in.push(LeadText::new(&text));
+                }
+            }
         }
         if waiting {
             self.release_lead_in_wait(&mut out, channel);
         }
         Ok(out)
+    }
+
+    /// The parts of the lead-in `delta` the turn has not read (`said`),
+    /// joined with a blank line; `delta` itself when it read none of them,
+    /// `None` when it read them all. A part without letters or digits goes
+    /// with the rest: dropped only when every other part was read.
+    fn unread(&self, channel: &str, delta: &str) -> Option<String> {
+        let said: &[String] = self.turns.get(channel).map_or(&[], |c| &c.said);
+        let all = said.concat();
+        let parts = paragraphs(delta);
+        let unread: Vec<Option<bool>> = parts
+            .iter()
+            .map(|p| {
+                let f = fold(p);
+                (!f.is_empty()).then(|| !read_already(said, &all, &f))
+            })
+            .collect();
+        if !unread.contains(&Some(true)) {
+            return None;
+        }
+        if unread.iter().all(|u| *u != Some(false)) {
+            return Some(delta.to_string());
+        }
+        let kept: Vec<&str> = parts
+            .iter()
+            .zip(&unread)
+            .filter(|(_, u)| **u != Some(false))
+            .map(|(p, _)| p.as_str())
+            .collect();
+        Some(kept.join("\n\n"))
     }
 
     /// The decisions that waited for a late lead-in go, in order (#360).
@@ -1009,7 +1205,6 @@ impl Rules {
         self.turn(channel).lead_in_wait = Some(LeadInWait {
             gen,
             id: ask.lead_in_id.clone(),
-            seen: Vec::new(),
         });
         out.push(Action::Timer {
             after: LEAD_IN_WAIT,
@@ -1089,6 +1284,9 @@ impl Rules {
         out
     }
 
+    /// A delta of streamed prose (`index` numbers the deltas of a block,
+    /// restarting at 0 for a new block; `final` ends the block). A block
+    /// that repeats a question's lead-in read already is dropped (`Echo`).
     pub fn stream(
         &mut self,
         channel: &str,
@@ -1098,26 +1296,26 @@ impl Rules {
         is_final: bool,
         t: Option<f64>,
     ) -> Result<Vec<Action>, Stale> {
+        self.stream_as(channel, turn, delta, index, is_final, t, false)
+    }
+
+    /// `stream`; `lead`: the delta is a question's lead-in (one whole
+    /// block), never taken for a repeat of one.
+    #[allow(clippy::too_many_arguments)]
+    fn stream_as(
+        &mut self,
+        channel: &str,
+        turn: Option<&str>,
+        delta: &str,
+        index: u32,
+        is_final: bool,
+        t: Option<f64>,
+        lead: bool,
+    ) -> Result<Vec<Action>, Stale> {
         if self.turns.get(channel).is_some_and(|c| c.stale(turn, t)) {
             return Err(Stale);
         }
         let mut out = Vec::new();
-        let c = self.turn(channel);
-        if let (0, true, Some(w)) = (index, is_final, c.lead_in_wait.as_mut()) {
-            // The same text as a late lead-in is not read twice (#360).
-            w.seen.push(fold(delta));
-        }
-        if index == 0 && is_final && c.lead_in.as_deref() == Some(fold(delta).as_str()) {
-            // The text the hook already sent as a question's lead-in.
-            c.lead_in = None;
-            self.note(
-                Some(channel),
-                "prose",
-                "dropped: the question's lead-in again (#323)".into(),
-                Some(delta.to_string()),
-            );
-            return Ok(out);
-        }
         let c = self.turn(channel);
         if c.ended
             && c.replied
@@ -1182,8 +1380,92 @@ impl Rules {
                 None,
             );
         }
+        let ready = if lead {
+            // The lead-in itself (the last ready, one whole block): what
+            // came before it is checked, the block it ends judged.
+            let mut before = ready;
+            let own = before.pop();
+            let mut ready = self.echo(channel, before);
+            ready.extend(self.judge_echo(channel, true));
+            ready.extend(own);
+            ready
+        } else {
+            self.echo(channel, ready)
+        };
         out.extend(self.assemble(channel, ready));
         Ok(out)
+    }
+
+    /// Deltas in order through the lead-in check (`Echo`): returns those to
+    /// read now. A block whose text so far is inside a lead-in read already
+    /// is held until it is judged (`judge_echo`).
+    fn echo(&mut self, channel: &str, deltas: Vec<Delta>) -> Vec<Delta> {
+        let mut out = Vec::new();
+        for d in deltas {
+            if d.1 == 0 {
+                out.extend(self.judge_echo(channel, true));
+            }
+            let fin = d.2;
+            let c = self.turn(channel);
+            if c.echo.passing {
+                out.push(d);
+            } else {
+                c.echo.block.push_str(&fold(&d.0));
+                if !may_echo(&c.lead_in, &c.echo.block) {
+                    c.echo.passing = true;
+                    out.append(&mut c.echo.held);
+                    out.push(d);
+                } else if c.echo.dropped {
+                    self.note(
+                        Some(channel),
+                        "prose",
+                        "dropped: the question's lead-in again (#323)".into(),
+                        Some(d.0),
+                    );
+                } else {
+                    c.echo.held.push(d);
+                }
+            }
+            if fin {
+                out.extend(self.judge_echo(channel, true));
+            }
+        }
+        out
+    }
+
+    /// Judge the block the lead-in check holds: a repeat of a lead-in is
+    /// dropped (noted), anything else is returned to be read. `ended`: the
+    /// block ended, the next one starts fresh; else (a release point) its
+    /// later deltas follow the verdict.
+    fn judge_echo(&mut self, channel: &str, ended: bool) -> Vec<Delta> {
+        let c = self.turn(channel);
+        let held = std::mem::take(&mut c.echo.held);
+        let repeat = !held.is_empty() && echoes(&c.lead_in, &c.echo.block);
+        if ended {
+            c.echo = Echo::default();
+        } else if repeat {
+            c.echo.dropped = true;
+        } else if !held.is_empty() {
+            c.echo.passing = true;
+        }
+        if !repeat {
+            return held;
+        }
+        let text: String = held.iter().map(|d| d.0.as_str()).collect();
+        self.note(
+            Some(channel),
+            "prose",
+            "dropped: the question's lead-in again (#323)".into(),
+            Some(text),
+        );
+        Vec::new()
+    }
+
+    /// A release point (a decision, a tool, the turn end): the block the
+    /// lead-in check holds is judged now and read if it is no repeat.
+    fn release_echo(&mut self, channel: &str) -> Vec<Action> {
+        let held = self.judge_echo(channel, false);
+        self.assemble(channel, held)
     }
 
     /// Release the deltas held for their order (#286) in index order, the
@@ -1204,6 +1486,7 @@ impl Rules {
             ),
             None,
         );
+        let ready = self.echo(channel, ready);
         self.assemble(channel, ready)
     }
 
@@ -1240,6 +1523,12 @@ impl Rules {
                 c.new_para = true;
             }
             c.last_index = Some(index);
+            // Taken for reading (`said`): a lead-in repeating it is dropped.
+            let folded = fold(&delta);
+            match c.said.last_mut() {
+                Some(s) if index != 0 => s.push_str(&folded),
+                _ => c.said.push(folded),
+            }
             for ch in c.assembler.feed(&delta, index, is_final) {
                 match ch {
                     Chunk::Text(t) => {
@@ -1369,10 +1658,14 @@ impl Rules {
         c.awaiting = false;
         c.questions = None;
         c.read_set = None;
-        c.lead_in = None;
+        c.lead_in.clear();
         c.reply = None;
         c.replied = None;
         self.drop_held(channel, "turn_start");
+        let c = self.turn(channel);
+        c.said.clear();
+        c.said_mark = 0;
+        c.asked.clear();
         let c = self.turn(channel);
         c.released = false;
         c.ended = false;
@@ -1420,6 +1713,7 @@ impl Rules {
         // go in order, without the missing ones (#286).
         let deltas = self.release_gap(channel, "turn_end");
         out.extend(deltas);
+        out.extend(self.release_echo(channel));
         out.extend(self.take_reply(channel));
         let c = self.turn(channel);
         c.released = true;
@@ -1438,9 +1732,26 @@ impl Rules {
 
     /// A decision blocks the agent.
     pub fn ask(&mut self, channel: &str, ask: &Ask) -> Vec<Action> {
+        if let Some(key) = ask.key() {
+            let c = self.turn(channel);
+            if c.asked.contains(&key) {
+                // The same tool use's question again (a batch sent twice):
+                // no earcon, no text.
+                self.note(
+                    Some(channel),
+                    ask.kind.as_str(),
+                    "dropped: the same question again".into(),
+                    Some(ask.text.clone()),
+                );
+                return Vec::new();
+            }
+            c.asked.push(key);
+        }
         // The lead-in before the decision (context first): deltas held for
-        // their order go now (#286).
+        // their order go now (#286), and a block held as a possible repeat
+        // of a lead-in is judged.
         let mut out = self.release_gap(channel, "decision");
+        out.extend(self.release_echo(channel));
         let everything = self.settings.verbosity == Verbosity::Everything;
         let awaiting = self.turn(channel).awaiting;
         let set = match ask.set {
@@ -1566,7 +1877,7 @@ impl Rules {
         };
         if self.settings.read_mode == ReadMode::Final {
             let c = self.turn(channel);
-            let lead_in = c.lead_in.is_some();
+            let lead_in = !c.lead_in.is_empty();
             match kind {
                 "plan" => {
                     self.drop_held(channel, "text before the plan");
@@ -1650,7 +1961,9 @@ impl Rules {
     /// `everything` the tool is announced, after the prose held so far
     /// (read mode `done`: the prose stays held, the tool is announced).
     pub fn tool(&mut self, channel: &str, name: &str, summary: &str) -> Vec<Action> {
-        let mut out = Vec::new();
+        // The message before the tool is over: a block held as a possible
+        // repeat of a lead-in is judged.
+        let mut out = self.release_echo(channel);
         let c = self.turn(channel);
         c.awaiting = false;
         c.questions = None;

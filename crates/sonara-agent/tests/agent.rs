@@ -2028,6 +2028,50 @@ fn a_questions_lead_in_is_read_once_when_message_display_repeats_it() {
 }
 
 #[test]
+fn a_questions_lead_in_is_read_once_when_message_display_brings_it_first() {
+    // The macOS report (2026-11-23): MessageDisplay came before PreToolUse,
+    // whose lead-in has the same text.
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    r.agent
+        .lead_in("a", None, "Here is my answer.", None)
+        .unwrap();
+    ask_set(&r, "a", 2);
+    r.read("Here is my answer.");
+    r.read("Question 1 of 2.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn a_late_lead_in_is_read_once_when_message_display_brought_it_first() {
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    let mut a = Ask::new(AskKind::Question, "Go on?");
+    a.lead_in_pending = true;
+    a.lead_in_id = Some("q1".into());
+    r.agent.ask("a", &a).unwrap();
+    r.agent
+        .late_lead_in("a", None, "Here is my answer.", "q1", None)
+        .unwrap();
+    r.read("Here is my answer.");
+    r.read("Go on?");
+    r.stays_idle();
+}
+
+#[test]
+fn the_same_question_twice_is_read_once() {
+    // A batch sent twice: one tool use, one question.
+    let r = Rig::new();
+    let mut a = Ask::new(AskKind::Question, "Go on?");
+    a.tool_use_id = Some("toolu_1".into());
+    r.agent.ask("a", &a).unwrap();
+    r.agent.ask("a", &a).unwrap();
+    r.read("Go on?");
+    r.stays_idle();
+}
+
+#[test]
 fn a_question_shown_while_the_message_is_read_waits_for_its_end_when_stepping() {
     // The user answers question 1 while the text before the questions is
     // read: the text is read to its end, then the question on screen.
