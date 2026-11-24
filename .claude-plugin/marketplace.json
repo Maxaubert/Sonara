@@ -3,8 +3,7 @@
   "name": "sonara",
   "description": "Sonara: text-to-speech for Claude Code on Windows and macOS",
   "owner": {
-    "name": "Max Aubert",
-    "email": "aubert@post.com"
+    "name": "Max Aubert"
   },
   "plugins": [
     {
