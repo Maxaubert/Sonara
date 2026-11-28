@@ -599,6 +599,26 @@ impl External {
         first: HttpRequest,
         key: Option<&Secret>,
     ) -> std::result::Result<Option<Vec<adapter::VoiceInfo>>, ExtError> {
+        self.paged_list(
+            adapter,
+            first,
+            |body| adapter.parse_voices(body),
+            |body| adapter.next_voices_page(body, key),
+            |v| v.id.clone(),
+        )
+    }
+
+    /// Fetch a list page by page (at most `VOICES_MAX_PAGES`), drop repeated
+    /// ids, and give `None` when muted meanwhile (no further page is asked
+    /// for, and no partial list is kept).
+    fn paged_list<T>(
+        &self,
+        adapter: &Arc<dyn Adapter>,
+        first: HttpRequest,
+        parse: impl Fn(&[u8]) -> std::result::Result<Vec<T>, ExtError>,
+        next_page: impl Fn(&[u8]) -> Option<HttpRequest>,
+        id: impl Fn(&T) -> String,
+    ) -> std::result::Result<Option<Vec<T>>, ExtError> {
         let mut out = Vec::new();
         let mut next = Some(first);
         for _ in 0..VOICES_MAX_PAGES {
@@ -617,11 +637,11 @@ impl External {
             if !r.ok() {
                 return Err(adapter.map_error(&r, "", None));
             }
-            out.extend(adapter.parse_voices(&r.body)?);
-            next = adapter.next_voices_page(&r.body, key);
+            out.extend(parse(&r.body)?);
+            next = next_page(&r.body);
         }
         let mut seen = std::collections::HashSet::new();
-        out.retain(|v| seen.insert(v.id.clone()));
+        out.retain(|v| seen.insert(id(v)));
         // A mute during the last page: the list is not kept either.
         if self.held() {
             return Ok(None);
@@ -712,32 +732,13 @@ impl External {
         first: HttpRequest,
         key: Option<&Secret>,
     ) -> std::result::Result<Option<Vec<ModelInfo>>, ExtError> {
-        let mut out = Vec::new();
-        let mut next = Some(first);
-        for _ in 0..VOICES_MAX_PAGES {
-            let Some(request) = next.take() else { break };
-            if self.held() {
-                return Ok(None);
-            }
-            let r = execute(
-                &self.voices_agent,
-                &request,
-                MAX_LIST_BODY,
-                &self.host,
-                None,
-            )?;
-            if !r.ok() {
-                return Err(adapter.map_error(&r, "", None));
-            }
-            out.extend(adapter.parse_models(&r.body)?);
-            next = adapter.next_models_page(&r.body, key);
-        }
-        let mut seen = std::collections::HashSet::new();
-        out.retain(|m| seen.insert(m.id.clone()));
-        if self.held() {
-            return Ok(None);
-        }
-        Ok(Some(out))
+        self.paged_list(
+            adapter,
+            first,
+            |body| adapter.parse_models(body),
+            |body| adapter.next_models_page(body, key),
+            |m| m.id.clone(),
+        )
     }
 
     /// Whether the voice cache is older than `VOICES_TTL` (or empty), and
