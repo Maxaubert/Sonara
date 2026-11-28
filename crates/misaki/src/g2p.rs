@@ -305,8 +305,12 @@ impl G2P {
             // Determine context from next token
             if i < tokens.len() - 1 {
                 let next_word = &tokens[i + 1].text;
-                // Check if next word starts with vowel (simple heuristic)
-                if let Some(first_char) = next_word.chars().next() {
+                // The next token's pass already set `future_vowel` from its
+                // phonemes ("hour" starts with a vowel sound, "user" with a
+                // consonant). Guess from the spelling only when it gave none.
+                if let (None, Some(first_char)) =
+                    (contexts[i].future_vowel, next_word.chars().next())
+                {
                     let first_lower = first_char.to_lowercase().next().unwrap();
                     if "aeiou".contains(first_lower) {
                         contexts[i].future_vowel = Some(true);
@@ -322,117 +326,15 @@ impl G2P {
 
             // Process current token
             if tokens[i].phonemes.is_none() {
-                let ctx = Some(&contexts[i]);
-
-                // Use get_word which handles special cases, lookup, and stemming
-                if let Some((ps, _)) = self.lexicon.get_word(&word, &tag, stress, ctx) {
-                    tokens[i].phonemes = Some(ps);
-                }
-
-                if tokens[i].phonemes.is_none() {
-                    if word.contains('-') && word.len() > 1 {
-                        // Handle hyphenated words like "twenty-one"
-                        let parts: Vec<&str> = word.split('-').filter(|s| !s.is_empty()).collect();
-                        let mut sub_ps = Vec::new();
-                        for part in parts {
-                            let (p, _) = self.g2p(part)?;
-                            sub_ps.push(p);
-                        }
-                        tokens[i].phonemes = Some(sub_ps.join(" "));
-                    } else if self.is_number(&word) {
-                        let spoken = self.convert_number(&word);
-                        if spoken != word {
-                            let (p, _) = self.g2p(&spoken)?;
-                            tokens[i].phonemes = Some(p);
-                        }
-                    }
-                }
-
-                if tokens[i].phonemes.is_none() {
-                    if let Some(ps) = self.rules.apply_rules(&word, &tag, &self.lexicon) {
-                        tokens[i].phonemes = Some(ps);
-                    }
-                }
-
-                if tokens[i].phonemes.is_none() {
-                    if word.chars().count() > 1 {
-                        // Unknown multi-character word - use fallback
-                        let mut handled = false;
-                        if let Some(ref fallback) = self.fallback {
-                            match fallback.phonemize(&word) {
-                                Ok(ps) => {
-                                    tokens[i].phonemes = Some(ps);
-                                    handled = true;
-                                }
-                                Err(e) => {
-                                    return Err(G2PError::Fallback(e));
-                                }
-                            }
-                        }
-
-                        if !handled {
-                            // No fallback available or failed, try character-by-character
-                            let mut char_ps = Vec::new();
-                            for c in word.chars() {
-                                let (p, _) = self.g2p(&c.to_string())?;
-                                char_ps.push(p);
-                            }
-                            tokens[i].phonemes = Some(char_ps.join(" "));
-                        }
-                    } else {
-                        // Try to normalize the character or return unknown
-                        let normalized: String = word
-                            .chars()
-                            .map(|c| match c {
-                                'é' | 'è' | 'ê' | 'ë' => 'e',
-                                'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
-                                'í' | 'ì' | 'î' | 'ï' => 'i',
-                                'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
-                                'ú' | 'ù' | 'û' | 'ü' => 'u',
-                                'ñ' => 'n',
-                                'ç' => 'c',
-                                '\u{2014}' | '\u{2013}' => ' ', // map dashes to spaces
-                                _ => c,
-                            })
-                            .collect();
-
-                        if normalized != word {
-                            let (p, _) = self.g2p(&normalized)?;
-                            tokens[i].phonemes = Some(p);
-                        } else {
-                            // Handle standard punctuation and symbols gracefully
-                            if word.chars().count() == 1 {
-                                let c = word.chars().next().unwrap();
-                                if c.is_ascii_punctuation()
-                                    || "\u{2014}\u{2013}\u{2026}".contains(c)
-                                {
-                                    // Preserve the six punctuation marks Kokoro's vocab
-                                    // encodes explicitly (vocab ids 1-6: ';:,.!?').
-                                    // Downstream tokenizers map these to their own ids
-                                    // and the synthesis model uses them as prosody cues
-                                    // (sentence-end pause, clause breath, question
-                                    // intonation). Anything else (em-dash, ellipsis,
-                                    // parens, …) still collapses to a single space,
-                                    // matching the prior whitespace fallback.
-                                    if matches!(c, ';' | ':' | ',' | '.' | '!' | '?') {
-                                        tokens[i].phonemes = Some(c.to_string());
-                                    } else {
-                                        tokens[i].phonemes = Some(" ".to_string());
-                                    }
-                                } else {
-                                    tokens[i].phonemes = Some(self.unk.clone());
-                                }
-                            } else {
-                                tokens[i].phonemes = Some(self.unk.clone());
-                            }
-                        }
-                    }
-                }
+                let ps = self.phonemize_token(&word, &tag, stress, &contexts[i])?;
+                tokens[i].phonemes = Some(ps);
             }
 
             // Update context for previous tokens based on current phonemes
             if i > 0 && tokens[i].phonemes.is_some() {
-                let vowels = "AIOQWYaiuæɑɒɔəɛɜɪʊʌᵻ";
+                // The lexicon also starts words with "ɐ" and "ɚ" ("about",
+                // "around") and with the bare "e" and "o" of a diphthong.
+                let vowels = "AIOQWYaiuæɑɒɔəɛɜɪʊʌᵻɐɚeo";
                 let consonants = "bdfhjklmnpstvwzðŋɡɹɾʃʒʤʧθ";
                 let phonemes = tokens[i].phonemes.as_ref().unwrap();
                 for c in phonemes.chars() {
@@ -453,6 +355,84 @@ impl G2P {
             .collect::<String>();
 
         Ok((result, tokens))
+    }
+
+    /// Phonemes for one word that has none preset. Tries, in order: the
+    /// lexicon, a hyphenated word (read in parts) or a number (spelled
+    /// out), the language rules, the fallback engine, then one character at
+    /// a time. A lone character is folded by [`normalize_char`], kept as
+    /// Kokoro punctuation, or read as unknown.
+    fn phonemize_token(
+        &self,
+        word: &str,
+        tag: &str,
+        stress: Option<f64>,
+        ctx: &crate::lexicon::TokenContext,
+    ) -> Result<String, G2PError> {
+        // Use get_word which handles special cases, lookup, and stemming
+        if let Some((ps, _)) = self.lexicon.get_word(word, tag, stress, Some(ctx)) {
+            return Ok(ps);
+        }
+
+        if word.contains('-') && word.len() > 1 {
+            // Handle hyphenated words like "twenty-one"
+            let mut sub_ps = Vec::new();
+            for part in word.split('-').filter(|s| !s.is_empty()) {
+                let (p, _) = self.g2p(part)?;
+                sub_ps.push(p);
+            }
+            return Ok(sub_ps.join(" "));
+        } else if self.is_number(word) {
+            let spoken = self.convert_number(word);
+            if spoken != word {
+                let (p, _) = self.g2p(&spoken)?;
+                return Ok(p);
+            }
+        }
+
+        if let Some(ps) = self.rules.apply_rules(word, tag, &self.lexicon) {
+            return Ok(ps);
+        }
+
+        if word.chars().count() > 1 {
+            // Unknown multi-character word - use fallback
+            if let Some(ref fallback) = self.fallback {
+                return fallback.phonemize(word).map_err(G2PError::Fallback);
+            }
+            // No fallback available, try character-by-character
+            let mut char_ps = Vec::new();
+            for c in word.chars() {
+                let (p, _) = self.g2p(&c.to_string())?;
+                char_ps.push(p);
+            }
+            return Ok(char_ps.join(" "));
+        }
+
+        // Try to normalize the character or return unknown
+        let normalized: String = word.chars().map(normalize_char).collect();
+        if normalized != word {
+            let (p, _) = self.g2p(&normalized)?;
+            return Ok(p);
+        }
+        // Handle standard punctuation and symbols gracefully
+        Ok(match word.chars().next() {
+            Some(c) if c.is_ascii_punctuation() || "\u{2014}\u{2013}\u{2026}".contains(c) => {
+                // Preserve the six punctuation marks Kokoro's vocab
+                // encodes explicitly (vocab ids 1-6: ';:,.!?').
+                // Downstream tokenizers map these to their own ids
+                // and the synthesis model uses them as prosody cues
+                // (sentence-end pause, clause breath, question
+                // intonation). Anything else (em-dash, ellipsis,
+                // parens, …) still collapses to a single space,
+                // matching the prior whitespace fallback.
+                if matches!(c, ';' | ':' | ',' | '.' | '!' | '?') {
+                    c.to_string()
+                } else {
+                    " ".to_string()
+                }
+            }
+            _ => self.unk.clone(),
+        })
     }
 
     /// "step 8's task" reads "step eight's task": the number and its `'s`
@@ -513,6 +493,22 @@ impl G2P {
             }
         }
         word.to_string()
+    }
+}
+
+/// Folds an accented letter to its plain letter and an en or em dash to a
+/// space, so a lone character can be looked up again.
+fn normalize_char(c: char) -> char {
+    match c {
+        'é' | 'è' | 'ê' | 'ë' => 'e',
+        'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+        'í' | 'ì' | 'î' | 'ï' => 'i',
+        'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+        'ú' | 'ù' | 'û' | 'ü' => 'u',
+        'ñ' => 'n',
+        'ç' => 'c',
+        '\u{2014}' | '\u{2013}' => ' ', // map dashes to spaces
+        _ => c,
     }
 }
 
