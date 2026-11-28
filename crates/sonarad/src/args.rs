@@ -133,7 +133,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
                     .ok()
                     .filter(|s: &f64| s.is_finite() && *s >= 0.0)
                     .ok_or(format!("bad --idle-exit '{v}'"))?;
-                idle_exit = Duration::from_secs_f64(secs);
+                idle_exit = Duration::try_from_secs_f64(secs)
+                    .map_err(|_| format!("bad --idle-exit '{v}'"))?;
             }
             "--standalone" => standalone = true,
             "--keys" => {
@@ -176,6 +177,16 @@ mod tests {
             Command::Run(a) => a,
             other => panic!("expected Run, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn idle_exit_that_overflows_is_a_usage_error() {
+        let bad = parse(["--idle-exit", "1e20"].iter().map(|s| s.to_string()));
+        assert_eq!(bad.unwrap_err(), "bad --idle-exit '1e20'");
+        assert_eq!(
+            run(&["--idle-exit", "30"]).idle_exit,
+            Duration::from_secs(30)
+        );
     }
 
     #[test]

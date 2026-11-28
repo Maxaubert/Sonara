@@ -126,9 +126,10 @@ pub fn normalize(text: &str) -> String {
         .replace_all(&t, "$1's")
         .into_owned();
     // 28th -> twenty eighth.
-    t = re(&ORD, r"\b(\d{1,2})(st|nd|rd|th)\b")
-        .replace_all(&t, |c: &Captures| {
-            ordinal(c[1].parse().expect("one or two digits"))
+    t = re(&ORD, r"\b([0-9]{1,2})(st|nd|rd|th)\b")
+        .replace_all(&t, |c: &Captures| match c[1].parse() {
+            Ok(n) => ordinal(n),
+            Err(_) => c[0].to_string(),
         })
         .into_owned();
     // Long all-caps words are names, not acronyms: SONARA, LOCALAPPDATA.
@@ -224,6 +225,13 @@ pub fn normalize(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_ascii_digit_ordinals_are_kept_and_do_not_panic() {
+        assert_eq!(normalize("\u{ff11}st place"), "\u{ff11}st place");
+        assert_eq!(normalize("\u{0661}st"), "\u{0661}st");
+        assert_eq!(normalize("the 28th"), "the twenty eighth");
+    }
 
     #[test]
     fn versions_numbers_and_ordinals() {
