@@ -10,8 +10,11 @@
 //! hook reads the end of the session's own transcript (`transcript_path`),
 //! finds the assistant message that holds the tool use (`tool_use_id`) and
 //! takes its text blocks, joined; when none has text, its last thinking
-//! block with text. The runtime drops a later `MessageDisplay` repeating
-//! it (`lead_in`). Claude Code writes each content block as its own row;
+//! block with text. The runtime reads the lead-in once whatever the order:
+//! it drops the parts of it (split at the blank lines that join the
+//! blocks) that `MessageDisplay` brought already, and `MessageDisplay`
+//! blocks that repeat it after it (`sonara-agent` rules, "Lead-in once").
+//! Claude Code writes each content block as its own row;
 //! the rows of one message share `message.id`.
 //!
 //! Claude Code mostly writes a question's rows only after `PreToolUse`

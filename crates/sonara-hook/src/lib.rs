@@ -158,9 +158,13 @@ fn host_tab(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
 }
 
 /// The session's label: the project it works in (`project_label`, #245;
-/// the walk to `.git` ends at the user's home, `USERPROFILE`).
+/// the walk to `.git` ends at the user's home: `USERPROFILE` on Windows,
+/// `HOME` where that is unset or empty, as on macOS).
 fn label(payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
-    project_label(text(payload, "cwd"), env("USERPROFILE").as_deref())
+    let home = env("USERPROFILE")
+        .filter(|h| !h.is_empty())
+        .or_else(|| env("HOME").filter(|h| !h.is_empty()));
+    project_label(text(payload, "cwd"), home.as_deref())
 }
 
 /// The `agent` messages that carry the session's label (#241).
@@ -436,6 +440,16 @@ fn map_unlabelled(
                         out.push(Value::Object(lead_in_stream(channel, t)));
                     }
                     let mut asks = questions(channel, input);
+                    let id = text(payload, "tool_use_id");
+                    if !id.is_empty() {
+                        // The runtime drops the same question again (a
+                        // batch delivered twice).
+                        for a in &mut asks {
+                            if let Value::Object(m) = a {
+                                m.insert("tool_use_id".into(), json!(id));
+                            }
+                        }
+                    }
                     if let (Lead::Later, Some(Value::Object(first))) = (&lead, asks.first_mut()) {
                         // Not on disk yet: the follow-up sends it (#360).
                         first.insert("lead_in_pending".into(), json!(true));
@@ -667,6 +681,37 @@ mod tests {
         assert!(asked.get());
     }
 
+    #[test]
+    fn the_walk_to_git_stops_at_home_when_only_home_is_set() {
+        // macOS has no USERPROFILE: a dotfiles repository in the home must
+        // not name a session outside any repository after the user.
+        let dir = std::env::temp_dir().join(format!("sonara-hook-home-{}", std::process::id()));
+        let home = dir.join("x");
+        std::fs::create_dir_all(home.join(".git")).unwrap();
+        std::fs::write(home.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir_all(home.join("scratch")).unwrap();
+        // Forward slashes, as on macOS.
+        let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        let p = json!({"session_id": "s", "cwd": slash(&home.join("scratch"))});
+        let only_home = |k: &str| (k == "HOME").then(|| slash(&home));
+        assert_eq!(label(&p, &only_home).as_deref(), Some("scratch"));
+        let empty_profile = |k: &str| match k {
+            "USERPROFILE" => Some(String::new()),
+            "HOME" => Some(slash(&home)),
+            _ => None,
+        };
+        assert_eq!(label(&p, &empty_profile).as_deref(), Some("scratch"));
+        // USERPROFILE wins when both are set.
+        let other = dir.join("elsewhere");
+        let both = |k: &str| match k {
+            "USERPROFILE" => Some(slash(&other)),
+            "HOME" => Some(slash(&home)),
+            _ => None,
+        };
+        assert_eq!(label(&p, &both).as_deref(), Some("x"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn ask_payload(n: usize) -> Value {
         let qs: Vec<Value> = (1..=n)
             .map(|i| json!({"question": format!("Q{i}?"), "options": [{"label": "A"}]}))
@@ -754,6 +799,21 @@ mod tests {
         }
         let one = map_event("PreToolUse", &ask_payload(1), &|_| None);
         assert!(one[0].get("set_index").is_none() && one[0].get("hint").is_some());
+    }
+
+    #[test]
+    fn every_question_of_a_set_carries_its_tool_use_id() {
+        // The runtime drops the same question again (a batch sent twice).
+        let out = map_event("PreToolUse", &ask_payload(3), &|_| None);
+        assert!(out.iter().all(|m| m["tool_use_id"] == "toolu_1"), "{out:?}");
+        // None in the payload: none sent.
+        let mut p = ask_payload(2);
+        p["tool_use_id"] = json!("");
+        let out = map_event("PreToolUse", &p, &|_| None);
+        assert!(
+            out.iter().all(|m| m.get("tool_use_id").is_none()),
+            "{out:?}"
+        );
     }
 
     #[test]

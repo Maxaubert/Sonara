@@ -469,6 +469,18 @@ impl Agent {
         channel: Option<&str>,
         f: impl FnOnce(&mut Rules) -> std::result::Result<Vec<Action>, Stale>,
     ) -> Result<bool> {
+        self.apply_as(source, channel, None, f)
+    }
+
+    /// `apply`; `ask`: the decision `f` applies, which starts no new turn
+    /// when the rules drop it as the same question again.
+    fn apply_as(
+        &self,
+        source: &str,
+        channel: Option<&str>,
+        ask: Option<&Ask>,
+        f: impl FnOnce(&mut Rules) -> std::result::Result<Vec<Action>, Stale>,
+    ) -> Result<bool> {
         if let Some(c) = channel {
             check(c)?;
         }
@@ -476,7 +488,9 @@ impl Agent {
         self.inner.seen(&mut rules, channel);
         self.inner.sync_whole(&mut rules);
         if let Some(c) = channel {
-            if (source == "tool" || source.starts_with("ask ")) && rules.take_new_turn(c) {
+            let repeat = ask.is_some_and(|a| rules.repeated_ask(c, a));
+            if (source == "tool" || source.starts_with("ask ")) && !repeat && rules.take_new_turn(c)
+            {
                 // A new turn without a turn_start: a new latest message.
                 self.inner.channels.end_batch(c);
             }
@@ -576,8 +590,10 @@ impl Agent {
     /// A decision.
     pub fn ask(&self, channel: &str, ask: &Ask) -> Result<()> {
         let source = format!("ask {}", ask.kind.as_str());
-        self.apply(&source, Some(channel), |r| Ok(r.ask(channel, ask)))
-            .map(|_| ())
+        self.apply_as(&source, Some(channel), Some(ask), |r| {
+            Ok(r.ask(channel, ask))
+        })
+        .map(|_| ())
     }
 
     /// A tool runs.

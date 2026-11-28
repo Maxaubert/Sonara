@@ -5,9 +5,10 @@ use crate::hello::Hello;
 use crate::home::stopped;
 use crate::runtime::{connect, read_runtime, start_runtime, Runtime, PROBE};
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::TcpStream;
 use std::path::Path;
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 /// How often `deliver` looks for the new runtime's `runtime.json`.
@@ -26,14 +27,35 @@ pub fn send(
     send_on(s, rt, hello, msgs, timeout)
 }
 
-/// `send` on a connection already made.
+/// `send` on a connection already made. An error means the batch was not
+/// written; once it was, the replies that came before the connection
+/// closed or `timeout` ran out are returned (a slow runtime still applies
+/// the batch: it must not be sent again).
 pub fn send_on(
-    mut s: TcpStream,
+    s: TcpStream,
     rt: &Runtime,
     hello: &Hello,
     msgs: &[Value],
     timeout: Duration,
 ) -> std::io::Result<Vec<Value>> {
+    exchange(s, rt, hello, msgs, timeout).map(|e| e.replies)
+}
+
+/// What `send_on` got back for a batch it wrote.
+struct Exchange {
+    /// The replies, hello first.
+    replies: Vec<Value>,
+    /// The wait for them ran out (the connection did not close).
+    timed_out: bool,
+}
+
+fn exchange(
+    mut s: TcpStream,
+    rt: &Runtime,
+    hello: &Hello,
+    msgs: &[Value],
+    timeout: Duration,
+) -> std::io::Result<Exchange> {
     s.set_nodelay(true)?;
     let hello = hello.message(&rt.token);
     let mut batch = Vec::new();
@@ -45,16 +67,27 @@ pub fn send_on(
     s.flush()?;
     let end = Instant::now() + timeout;
     let mut replies = Vec::new();
+    let mut timed_out = false;
     let mut r = BufReader::new(s);
     while replies.len() < msgs.len() + 1 {
         let left = end.saturating_duration_since(Instant::now());
         if left.is_zero() {
+            timed_out = true;
             break;
         }
-        r.get_ref().set_read_timeout(Some(left))?;
-        let mut line = String::new();
-        if r.read_line(&mut line)? == 0 {
+        if r.get_ref().set_read_timeout(Some(left)).is_err() {
             break;
+        }
+        let mut line = String::new();
+        match r.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            // The read timeout: `TimedOut` on Windows, `WouldBlock` on Unix.
+            Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                timed_out = true;
+                break;
+            }
+            Err(_) => break,
         }
         if let Ok(v) = serde_json::from_str::<Value>(&line) {
             if v.get("ok").is_some() {
@@ -62,7 +95,7 @@ pub fn send_on(
             }
         }
     }
-    Ok(replies)
+    Ok(Exchange { replies, timed_out })
 }
 
 /// What `deliver` did.
@@ -99,7 +132,8 @@ pub fn worth_trying(rt: &Runtime, stale: Option<u64>, start_exited: bool) -> boo
 /// (with `args`) when none answers, `exe` is given and the home is not
 /// `stopped`; the start and the wait for it end by `deadline`. Never
 /// blocks past the deadline for the start, nor past `timeout` for the
-/// replies.
+/// replies. A batch is written at most once to a runtime: one that got it
+/// and did not count as delivered (`delivered`) is not tried again.
 pub fn deliver(
     home: &Path,
     hello: &Hello,
@@ -109,32 +143,73 @@ pub fn deliver(
     deadline: Instant,
     timeout: Duration,
 ) -> Delivery {
+    deliver_with(home, hello, msgs, exe, deadline, timeout, &|exe| {
+        start_runtime(exe, args)
+    })
+}
+
+/// `connect` checked that the port is held by the process `runtime.json`
+/// names (#56): it does when the file has a pid and the platform can tell
+/// who holds a port (`runtime.rs` `OWNER_CHECK`).
+fn owner_checked(rt: &Runtime) -> bool {
+    rt.pid.is_some() && cfg!(any(windows, target_os = "macos"))
+}
+
+/// The runtime has the batch written to it: it answered hello ok (later
+/// replies may still be out), or said nothing before the wait ran out
+/// while `connect` had checked that it holds the port (a busy runtime, not
+/// a squatter). A listener that answers anything else, or closes without
+/// an ok hello, is not the runtime.
+fn delivered(rt: &Runtime, e: &Exchange) -> bool {
+    hello_ok(&e.replies) || (e.replies.is_empty() && e.timed_out && owner_checked(rt))
+}
+
+/// `deliver`, with `start` starting the runtime (the tests: a stand-in).
+fn deliver_with(
+    home: &Path,
+    hello: &Hello,
+    msgs: &[Value],
+    exe: Option<&Path>,
+    deadline: Instant,
+    timeout: Duration,
+    start: &dyn Fn(&Path) -> std::io::Result<Child>,
+) -> Delivery {
     let before = read_runtime(home);
+    let mut written: Option<Runtime> = None;
     if let Some(rt) = &before {
         // A crashed runtime leaves runtime.json behind, and another program
         // may hold its port by now: only an ok reply to hello is the runtime.
         if let Ok(s) = connect(rt, PROBE) {
-            if send_on(s, rt, hello, msgs, timeout).is_ok_and(|r| hello_ok(&r)) {
-                return Delivery::Sent;
+            if let Ok(e) = exchange(s, rt, hello, msgs, timeout) {
+                if delivered(rt, &e) {
+                    return Delivery::Sent;
+                }
+                written = Some(rt.clone());
             }
         }
     }
     let Some(exe) = exe.filter(|_| !stopped(home)) else {
         return Delivery::Dropped;
     };
-    let Ok(mut child) = start_runtime(exe, args) else {
+    if Instant::now() >= deadline {
+        // No time left to start one and wait for it.
+        return Delivery::Dropped;
+    }
+    let Ok(mut child) = start(exe) else {
         return Delivery::Dropped;
     };
     let stale = before.and_then(|r| r.pid);
     while Instant::now() < deadline {
         std::thread::sleep(POLL);
         let exited = matches!(child.try_wait(), Ok(Some(_)));
-        let Some(rt) = read_runtime(home).filter(|r| worth_trying(r, stale, exited)) else {
+        let Some(rt) = read_runtime(home)
+            .filter(|r| worth_trying(r, stale, exited) && written.as_ref() != Some(r))
+        else {
             continue;
         };
         let left = deadline.saturating_duration_since(Instant::now());
         if let Ok(s) = connect(&rt, left.min(PROBE)) {
-            let _ = send_on(s, &rt, hello, msgs, timeout);
+            let _ = exchange(s, &rt, hello, msgs, timeout);
             return Delivery::Started;
         }
     }
@@ -298,6 +373,121 @@ mod tests {
             assert_eq!(d, Delivery::Dropped, "not counted as sent");
         }
         server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A runtime (this process, so `connect`'s owner check passes) that
+    /// reads hello and one message, answers hello ok when `answer`, then
+    /// stalls. Returns the lines it read and how many more connections came.
+    fn stalling_runtime(dir: &Path, answer: bool) -> std::thread::JoinHandle<(Vec<String>, usize)> {
+        use std::net::TcpListener;
+        std::fs::create_dir_all(dir).unwrap();
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::fs::write(
+            dir.join(crate::home::RUNTIME_FILE),
+            json!({"pid": std::process::id(), "port": port, "token": "tok"}).to_string(),
+        )
+        .unwrap();
+        std::thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut lines = Vec::new();
+            for _ in 0..2 {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                lines.push(line);
+            }
+            if answer {
+                (&s).write_all(b"{\"ok\":true}\n").unwrap();
+            }
+            l.set_nonblocking(true).unwrap();
+            let mut more = 0;
+            let end = Instant::now() + Duration::from_millis(1200);
+            while Instant::now() < end {
+                if l.accept().is_ok() {
+                    more += 1;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            drop(s);
+            (lines, more)
+        })
+    }
+
+    fn no_start(called: &std::cell::Cell<bool>) -> impl Fn(&Path) -> std::io::Result<Child> + '_ {
+        |_| {
+            called.set(true);
+            Err(std::io::Error::other("no start in tests"))
+        }
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn a_runtime_that_answers_hello_then_stalls_got_the_batch_once() {
+        // Audit 2026-11-23: a reply that timed out made the batch count as
+        // not sent, so a runtime was started and the batch could go again.
+        let dir = std::env::temp_dir().join(format!("sonara-client-slow-{}", std::process::id()));
+        let server = stalling_runtime(&dir, true);
+        let called = std::cell::Cell::new(false);
+        let d = deliver_with(
+            &dir,
+            &HELLO,
+            &[json!({"type": "stream", "delta": "the turn"})],
+            Some(&dir.join("sonarad.exe")),
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_millis(300),
+            &no_start(&called),
+        );
+        assert_eq!(d, Delivery::Sent);
+        assert!(!called.get(), "no runtime started");
+        let (lines, more) = server.join().unwrap();
+        assert!(
+            lines[0].contains("hello") && lines[1].contains("the turn"),
+            "{lines:?}"
+        );
+        assert_eq!(more, 0, "the batch went once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn a_runtime_that_holds_its_port_and_says_nothing_got_the_batch_once() {
+        let dir = std::env::temp_dir().join(format!("sonara-client-mute-{}", std::process::id()));
+        let server = stalling_runtime(&dir, false);
+        let called = std::cell::Cell::new(false);
+        let d = deliver_with(
+            &dir,
+            &HELLO,
+            &[json!({"type": "stream", "delta": "the turn"})],
+            Some(&dir.join("sonarad.exe")),
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_millis(300),
+            &no_start(&called),
+        );
+        assert_eq!(d, Delivery::Sent);
+        assert!(!called.get(), "no runtime started");
+        let (_, more) = server.join().unwrap();
+        assert_eq!(more, 0, "the batch went once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_runtime_is_started_once_the_deadline_passed() {
+        let dir = std::env::temp_dir().join(format!("sonara-client-late-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let called = std::cell::Cell::new(false);
+        let d = deliver_with(
+            &dir,
+            &HELLO,
+            &[json!({"type": "stream"})],
+            Some(&dir.join("sonarad.exe")),
+            Instant::now(),
+            Duration::from_millis(300),
+            &no_start(&called),
+        );
+        assert_eq!(d, Delivery::Dropped);
+        assert!(!called.get(), "no start after the deadline");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
