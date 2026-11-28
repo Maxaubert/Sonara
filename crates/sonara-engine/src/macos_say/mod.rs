@@ -8,6 +8,11 @@
 //! mapping, the text guard, the failure text) live here so they are tested
 //! on any machine; the process calls are in `say.rs`.
 use crate::{EngineId, Error, MACOS_VOICES_FIX};
+use std::collections::HashMap;
+use std::io::Read;
+use std::process::{Child, Command, Stdio};
+use std::sync::{mpsc, Mutex};
+use std::time::{Duration, Instant};
 
 #[cfg(all(target_os = "macos", feature = "macos-say"))]
 mod say;
@@ -183,6 +188,130 @@ pub fn no_voices() -> Error {
     ))
 }
 
+/// The time limit of `say -v '?'`. It prints a short list at once; a
+/// stuck speech server must not hang the synthesis thread for good.
+pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How often the voice list call checks whether its child ended.
+const LIST_POLL: Duration = Duration::from_millis(5);
+
+/// The error when a program cannot be started.
+pub fn cannot_run(program: &std::ffi::OsStr, e: std::io::Error) -> Error {
+    Error::Engine(format!(
+        "macOS speech is unavailable: cannot run {}: {e}",
+        std::path::Path::new(program).display()
+    ))
+}
+
+/// Kill and reap the child under `key`, if it is still tracked.
+fn kill_tracked(running: &Mutex<HashMap<u64, Child>>, key: u64) {
+    let child = running
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&key);
+    if let Some(mut c) = child {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+
+/// The voices a listing command (`say -v '?'`) prints, from `cache` when it
+/// holds them. The child is tracked in `running` under `key`, so a cancel
+/// (which kills every tracked child) ends it; `cancelled` says whether one
+/// happened since the call began, and then the result is `Error::Cancelled`.
+/// A child that runs past `limit` is killed and reaped. A non-empty list is
+/// cached; an empty one is not, so a later call lists again.
+pub fn list_voices(
+    mut cmd: Command,
+    limit: Duration,
+    running: &Mutex<HashMap<u64, Child>>,
+    key: u64,
+    cancelled: &dyn Fn() -> bool,
+    cache: &Mutex<Option<Vec<VoiceInfo>>>,
+) -> Result<Vec<VoiceInfo>, Error> {
+    let lock_running = || running.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(v) = cache.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        return Ok(v.clone());
+    }
+    let deadline = Instant::now() + limit;
+    let timed_out = || {
+        Error::Engine(format!(
+            "macOS speech could not list its voices in {} ms",
+            limit.as_millis()
+        ))
+    };
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| cannot_run(cmd.get_program(), e))?;
+    // Read stdout on a thread of its own, so a full pipe never stalls the
+    // child while this thread waits for it to exit.
+    let (tx, rx) = mpsc::channel();
+    if let Some(mut out) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf);
+            let _ = tx.send(buf);
+        });
+    } else {
+        let _ = tx.send(Vec::new());
+    }
+    lock_running().insert(key, child);
+    if cancelled() {
+        kill_tracked(running, key);
+        return Err(Error::Cancelled);
+    }
+    let status = loop {
+        let done = {
+            let mut running = lock_running();
+            match running.get_mut(&key).map(Child::try_wait) {
+                Some(Ok(Some(status))) => {
+                    running.remove(&key);
+                    Some(Ok(status))
+                }
+                Some(Ok(None)) => None,
+                Some(Err(e)) => {
+                    if let Some(mut c) = running.remove(&key) {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
+                    Some(Err(e))
+                }
+                None => Some(Err(std::io::Error::other("lost track of say"))),
+            }
+        };
+        match done {
+            Some(r) => break r,
+            None if Instant::now() >= deadline => {
+                kill_tracked(running, key);
+                if cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                return Err(timed_out());
+            }
+            None => std::thread::sleep(LIST_POLL),
+        }
+    };
+    if cancelled() {
+        return Err(Error::Cancelled);
+    }
+    let status = status.map_err(|e| Error::Engine(format!("macOS speech failed: {e}")))?;
+    if !status.success() {
+        return Err(classify_failure(&status.to_string(), ""));
+    }
+    // The child has exited; a process it left behind holding the pipe open
+    // must not hang the call either.
+    let stdout = rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|_| timed_out())?;
+    let voices = parse_voices(&String::from_utf8_lossy(&stdout));
+    if !voices.is_empty() {
+        *cache.lock().unwrap_or_else(|p| p.into_inner()) = Some(voices.clone());
+    }
+    Ok(voices)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +479,175 @@ not a voice line
             none.contains("System Settings > Accessibility > Spoken Content"),
             "{none}"
         );
+    }
+
+    /// The env var that turns this test binary into a stand-in `say -v '?'`.
+    const STAND_IN: &str = "SONARA_SAY_LIST_STAND_IN";
+
+    /// Not a test of its own: run by `stand_in`, it lists `LISTING`
+    /// (`list`), prints nothing (`empty`) or never ends (`hang`).
+    #[test]
+    fn say_list_stand_in() {
+        match std::env::var(STAND_IN).as_deref() {
+            Ok("list") => println!("\n{LISTING}"),
+            Ok("hang") => std::thread::sleep(Duration::from_secs(120)),
+            _ => {}
+        }
+    }
+
+    /// This test binary as the listing program, in `mode`, with no window.
+    fn stand_in(mode: &str) -> Command {
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.args([
+            "--exact",
+            "macos_say::tests::say_list_stand_in",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(STAND_IN, mode);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        cmd
+    }
+
+    fn not_cancelled() -> bool {
+        false
+    }
+
+    #[test]
+    fn a_hung_voice_list_times_out_and_its_child_is_killed() {
+        let running = Mutex::new(HashMap::new());
+        let cache = Mutex::new(None);
+        let limit = Duration::from_millis(500);
+        let start = Instant::now();
+        let r = list_voices(stand_in("hang"), limit, &running, 1, &not_cancelled, &cache);
+        let took = start.elapsed();
+        match r {
+            Err(Error::Engine(m)) => assert!(m.contains("could not list its voices"), "{m}"),
+            other => panic!("expected a timeout, got {other:?}"),
+        }
+        assert!(took >= limit, "returned before the limit: {took:?}");
+        assert!(took < limit + Duration::from_secs(10), "took {took:?}");
+        // Killed and reaped: nothing is left in flight.
+        assert!(running.lock().unwrap().is_empty());
+        assert!(cache.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_cancel_during_the_voice_list_ends_it() {
+        let running = Mutex::new(HashMap::<u64, Child>::new());
+        let cache = Mutex::new(None);
+        let flag = std::sync::atomic::AtomicBool::new(false);
+        let limit = Duration::from_secs(60);
+        let start = Instant::now();
+        let r = std::thread::scope(|s| {
+            let call = s.spawn(|| {
+                list_voices(
+                    stand_in("hang"),
+                    limit,
+                    &running,
+                    7,
+                    &|| flag.load(std::sync::atomic::Ordering::SeqCst),
+                    &cache,
+                )
+            });
+            // Wait for the child to be tracked, then cancel as `MacSay`
+            // does: mark the cancel and kill every tracked child.
+            while running.lock().unwrap().is_empty() {
+                assert!(start.elapsed() < Duration::from_secs(20), "never tracked");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            for c in running.lock().unwrap().values_mut() {
+                let _ = c.kill();
+            }
+            call.join().unwrap()
+        });
+        assert_eq!(r, Err(Error::Cancelled));
+        assert!(start.elapsed() < Duration::from_secs(20));
+        assert!(running.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_listed_voice_list_is_parsed_and_cached() {
+        let running = Mutex::new(HashMap::new());
+        let cache = Mutex::new(None);
+        let voices = list_voices(
+            stand_in("list"),
+            Duration::from_secs(30),
+            &running,
+            1,
+            &not_cancelled,
+            &cache,
+        )
+        .unwrap();
+        assert_eq!(voices, parse_voices(LISTING));
+        assert_eq!(cache.lock().unwrap().as_ref(), Some(&voices));
+        assert!(running.lock().unwrap().is_empty());
+        // Cached: a program that would hang is never run.
+        let again = list_voices(
+            stand_in("hang"),
+            Duration::from_millis(100),
+            &running,
+            2,
+            &not_cancelled,
+            &cache,
+        )
+        .unwrap();
+        assert_eq!(again, voices);
+    }
+
+    #[test]
+    fn an_empty_voice_list_is_not_cached_and_each_hang_is_bounded() {
+        let running = Mutex::new(HashMap::new());
+        let cache = Mutex::new(None);
+        let empty = list_voices(
+            stand_in("empty"),
+            Duration::from_secs(30),
+            &running,
+            1,
+            &not_cancelled,
+            &cache,
+        )
+        .unwrap();
+        assert!(empty.is_empty());
+        assert!(cache.lock().unwrap().is_none());
+        let limit = Duration::from_millis(300);
+        for key in 2..4 {
+            let start = Instant::now();
+            let r = list_voices(
+                stand_in("hang"),
+                limit,
+                &running,
+                key,
+                &not_cancelled,
+                &cache,
+            );
+            assert!(matches!(r, Err(Error::Engine(_))), "{r:?}");
+            assert!(start.elapsed() < limit + Duration::from_secs(10));
+        }
+        assert!(running.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_missing_program_names_it() {
+        let running = Mutex::new(HashMap::new());
+        let cache = Mutex::new(None);
+        let r = list_voices(
+            Command::new("sonara-no-such-say-program"),
+            Duration::from_secs(5),
+            &running,
+            1,
+            &not_cancelled,
+            &cache,
+        );
+        match r {
+            Err(Error::Engine(m)) => assert!(m.contains("sonara-no-such-say-program"), "{m}"),
+            other => panic!("expected a spawn error, got {other:?}"),
+        }
     }
 }
