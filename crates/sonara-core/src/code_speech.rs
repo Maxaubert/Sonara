@@ -572,6 +572,24 @@ fn render(code: &str, mode: &Mode) -> String {
     p.finish()
 }
 
+/// Byte index in `rest` where the identifier starting at its first char ends.
+/// A joiner ('-' in kebab modes, or an apostrophe) stays in the word when it
+/// sits between an alphanumeric char and an alphabetic one. No allocation.
+fn word_end(rest: &str, kebab: bool) -> usize {
+    let mut it = rest.char_indices().peekable();
+    let mut prev: Option<char> = None;
+    while let Some((j, ch)) = it.next() {
+        let joins = (ch == '-' && kebab) || ch == '\'';
+        let between = prev.is_some_and(|q| q.is_alphanumeric())
+            && it.peek().is_some_and(|(_, n)| n.is_alphabetic());
+        if !(is_word_char(ch) || (joins && between)) {
+            return j;
+        }
+        prev = Some(ch);
+    }
+    rest.len()
+}
+
 fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
     let mut i = 0;
     // A flag can start here: the start or after whitespace.
@@ -705,18 +723,7 @@ fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
         if is_word_start(c) {
             // A hyphen (in kebab languages) or an apostrophe between letters
             // stays in the name: `font-size`, `don't`.
-            let chars: Vec<(usize, char)> = rest.char_indices().collect();
-            let end = chars
-                .iter()
-                .enumerate()
-                .find(|(k, (_, ch))| {
-                    let joins = (*ch == '-' && mode.kebab) || *ch == '\'';
-                    let between = *k > 0
-                        && chars[k - 1].1.is_alphanumeric()
-                        && chars.get(k + 1).is_some_and(|(_, n)| n.is_alphabetic());
-                    !(is_word_char(*ch) || (joins && between))
-                })
-                .map_or(rest.len(), |(_, (j, _))| *j);
+            let end = word_end(rest, mode.kebab);
             p.word(&identifier(&rest[..end]));
             i += end;
             continue;
@@ -827,4 +834,46 @@ fn content(s: &str, from: usize, p: &mut Parts) -> usize {
         p.part(text);
     }
     end
+}
+
+#[cfg(test)]
+mod word_end_tests {
+    use super::word_end;
+
+    #[test]
+    fn kebab_joiner_between_letters_stays_in_the_word() {
+        assert_eq!(word_end("font-size: 1", true), 9);
+        assert_eq!(word_end("font-size: 1", false), 4);
+    }
+
+    #[test]
+    fn apostrophe_between_letters_stays_in_the_word() {
+        assert_eq!(word_end("don't stop", false), 5);
+    }
+
+    #[test]
+    fn a_trailing_joiner_does_not_join() {
+        assert_eq!(word_end("a- b", true), 1);
+        assert_eq!(word_end("it' s", false), 2);
+        assert_eq!(word_end("a-", true), 1);
+        assert_eq!(word_end("it'", false), 2);
+    }
+
+    #[test]
+    fn a_double_joiner_or_a_digit_after_it_does_not_join() {
+        assert_eq!(word_end("a--b", true), 1);
+        assert_eq!(word_end("x-1", true), 1);
+    }
+
+    #[test]
+    fn non_ascii_letters_join_by_byte_index() {
+        assert_eq!(word_end("naïve-café x", true), "naïve-café".len());
+    }
+
+    #[test]
+    fn a_word_at_the_end_runs_to_the_length() {
+        assert_eq!(word_end("abc", true), 3);
+        assert_eq!(word_end("ab-cd", true), 5);
+        assert_eq!(word_end("", true), 0);
+    }
 }
