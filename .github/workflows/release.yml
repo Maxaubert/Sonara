@@ -171,7 +171,7 @@ jobs:
         run: |
           cargo build -p sonarad -p sonara-hook -p sonara-cli --release
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          # onnxruntime.dll (official CPU build, pinned SHA-256) and the VC++
+          # onnxruntime.dll (official NuGet CPU package, pinned SHA-256) and the VC++
           # runtime DLLs it imports, next to sonarad.exe.
           python packaging/runtime_dlls.py --platform win-x64 stage target/release
           if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -231,7 +231,7 @@ jobs:
       - name: Build
         run: |
           cargo build -p sonarad -p sonara-hook -p sonara-cli --release
-          # libonnxruntime.dylib (official osx-arm64 build, pinned SHA-256)
+          # libonnxruntime.dylib (official NuGet CPU package, pinned SHA-256)
           # and its licence files, next to sonarad.
           python packaging/runtime_dlls.py --platform macos-arm64 stage target/release
           python packaging/notices/gen_notices.py --check

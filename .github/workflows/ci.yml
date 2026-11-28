@@ -179,7 +179,7 @@ jobs:
           python-version: "3.9"
       # sonara-hook and sonara.exe too: tests/embed builds the release zip.
       - run: cargo build -p sonarad -p sonara-hook -p sonara-cli --release
-      # Microsoft's official ONNX Runtime CPU build (fetched by URL, pinned
+      # Microsoft's official ONNX Runtime CPU NuGet package (fetched by URL, pinned
       # SHA-256) and the VC++ runtime DLLs it imports, next to sonarad.exe,
       # so the npm runtime package below is built as it ships.
       - name: Stage onnxruntime.dll and the VC++ runtime
