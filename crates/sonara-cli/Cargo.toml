@@ -3,6 +3,7 @@ name = "sonara-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Sonara's command line (sonara.exe): start, stop, settings, doctor and uninstall for the Claude Code plugin's runtime"
 
 [[bin]]

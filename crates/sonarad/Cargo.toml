@@ -3,6 +3,7 @@ name = "sonarad"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Sonara host process: serves protocol v1 (core and extensions) over loopback TCP and HTTP"
 
 [[bin]]

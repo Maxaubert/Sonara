@@ -14,9 +14,9 @@
 use crate::code_speech;
 use crate::table;
 use crate::text::{normalize_for_speech, stabilize_ordinals};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 const FENCE: &str = "```";
 
@@ -26,19 +26,19 @@ const FENCE: &str = "```";
 // delta boundary that happens to land right after a period from emitting a
 // premature half-sentence; the trailing fragment is delivered by the final
 // flush instead (#56). `[\s\x1C-\x1F]` is Python's `\s` (see text.rs).
-static SENTENCE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?s)(.+?[.!?]["'’”)\]*_`]*)[\s\x1C-\x1F]+"#).unwrap());
+static SENTENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?s)(.+?[.!?]["'’”)\]*_`]*)[\s\x1C-\x1F]+"#).unwrap());
 // a chunk is speakable only if it contains at least one word character
-static WORD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z0-9]").unwrap());
+static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9]").unwrap());
 // A list item's first line, after `stabilize_ordinals` ("3. " is "3: "):
 // a bullet or an ordinal, then a space (#324).
-static LIST_ITEM: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[ \t]*(?:[-*+\u{2022}]|\d{1,3}:)[ \t]+\S").unwrap());
+static LIST_ITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[ \t]*(?:[-*+\u{2022}]|\d{1,3}:)[ \t]+\S").unwrap());
 // A paragraph boundary = a blank line. We split the RAW buffer on this (before
 // cleaning collapses whitespace) so the boundary survives even when the
 // blank line straddles two streamed deltas. feed() yields ParagraphBreak between
 // paragraphs so the daemon can group history by paragraph (the nav 'item' unit).
-static PARA: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n[ \t]*\n").unwrap());
+static PARA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n[ \t]*\n").unwrap());
 
 /// One unit of `ProseAssembler::feed` output.
 #[derive(Debug, Clone, PartialEq, Eq)]
