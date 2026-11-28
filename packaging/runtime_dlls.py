@@ -1,10 +1,16 @@
 """Stage the libraries the Kokoro engine needs next to ``sonarad``.
 
-- Windows (``win-x64``): ``onnxruntime.dll`` from Microsoft's official ONNX Runtime CPU build for
-  Windows x64 (MIT), fetched by URL and checked against a pinned SHA-256,
-  with its ``LICENSE`` and ``ThirdPartyNotices.txt`` (shipped as
-  ``onnxruntime-LICENSE.txt`` and ``onnxruntime-ThirdPartyNotices.txt``).
-- The Visual C++ runtime DLLs ``onnxruntime.dll`` imports (``msvcp140.dll``,
+Both platforms take ONNX Runtime from one archive: Microsoft's official NuGet
+package ``Microsoft.ML.OnnxRuntime`` (MIT, the CPU build), fetched by URL
+from nuget.org and checked against a pinned SHA-256. It is downloaded once
+and cached; each platform extracts its own library from it, with the
+package's ``LICENSE`` and ``ThirdPartyNotices.txt`` (shipped as
+``onnxruntime-LICENSE.txt`` and ``onnxruntime-ThirdPartyNotices.txt``).
+(The GitHub release assets used before are gone: github.com/microsoft/onnxruntime
+answers 404 since 2026-11.)
+
+- Windows (``win-x64``): ``runtimes/win-x64/native/onnxruntime.dll``, plus
+  the Visual C++ runtime DLLs it imports (``msvcp140.dll``,
   ``msvcp140_1.dll``, ``vcruntime140.dll``, ``vcruntime140_1.dll``), copied
   from the Visual Studio redistributable folder of this machine (app-local
   deployment, allowed by the Visual Studio licence terms). ``sonarad.exe``
@@ -12,10 +18,8 @@
   older than ``MIN_VC_VERSION`` is refused: a runtime older than the toolset
   ORT was built with can crash (the ``std::mutex`` constexpr change of
   VS 2022 17.10, runtime 14.40).
-- macOS (``macos-arm64``): ``libonnxruntime.dylib`` from Microsoft's
-  official ``osx-arm64`` build (a tgz, also pinned by SHA-256), with the same
-  two licence files. It links only system frameworks and libc++, so there is
-  no VC++ step.
+- macOS (``macos-arm64``): ``runtimes/osx-arm64/native/libonnxruntime.dylib``.
+  It links only system frameworks and libc++, so there is no VC++ step.
 
     python packaging/runtime_dlls.py fetch            # download + verify (cached)
     python packaging/runtime_dlls.py stage target/release
@@ -33,42 +37,42 @@ import argparse
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import sys
-import tarfile
 import urllib.request
 import zipfile
 from typing import NamedTuple
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-ORT_VERSION = "1.28.2"
-ORT_URL = (
-    f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}/"
-    f"onnxruntime-win-x64-{ORT_VERSION}.zip"
-)
-ORT_SHA256 = "c4eedd29489d5feca21866d054638416f3655bf6b18851b3b6b85c8313e95c35"
+ORT_VERSION = "1.28.0"
+# The one archive both platforms take ONNX Runtime from (a nupkg is a zip).
+ORT_PACKAGE = f"microsoft.ml.onnxruntime.{ORT_VERSION}.nupkg"
+ORT_URL = f"https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/{ORT_VERSION}/{ORT_PACKAGE}"
+# Checked against the package downloaded from nuget.org on 2026-11-24.
+ORT_SHA256 = "769d1d3ea8ab6cd69f737c9dd4d4462aa4ad0ccfa106eaf506efc40d7bead5db"
 CACHE = REPO / "target" / "onnxruntime"
-# In the extracted folder: the SHA-256 of each file, from the checked zip.
+# In each extracted folder: the SHA-256 of each file, from the checked package.
 CACHE_SUMS = "SHA256SUMS"
-# (member in the zip, name next to sonarad.exe)
+# (member in the package, name next to sonarad.exe)
 ORT_FILES = (
-    ("lib/onnxruntime.dll", "onnxruntime.dll"),
+    ("runtimes/win-x64/native/onnxruntime.dll", "onnxruntime.dll"),
+    ("LICENSE", "onnxruntime-LICENSE.txt"),
+    ("ThirdPartyNotices.txt", "onnxruntime-ThirdPartyNotices.txt"),
+)
+ORT_MACOS_FILES = (
+    ("runtimes/osx-arm64/native/libonnxruntime.dylib", "libonnxruntime.dylib"),
     ("LICENSE", "onnxruntime-LICENSE.txt"),
     ("ThirdPartyNotices.txt", "onnxruntime-ThirdPartyNotices.txt"),
 )
 
 
 class Ort(NamedTuple):
-    """One platform's ONNX Runtime asset."""
+    """One platform's ONNX Runtime files in the package."""
 
     platform: str
-    # The archive's top folder, also its name in the cache (plus ``suffix``).
-    stem: str
-    suffix: str
-    url: str
-    sha256: str
-    # (member under ``stem/``, name next to sonarad)
+    # (member in the package, name next to sonarad)
     files: tuple
     # The cache folder under ``CACHE``.
     folder: str
@@ -76,25 +80,9 @@ class Ort(NamedTuple):
     vc: bool
 
 
-ORT_MACOS_STEM = f"onnxruntime-osx-arm64-{ORT_VERSION}"
-ORT_MACOS_URL = (
-    f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VERSION}/{ORT_MACOS_STEM}.tgz"
-)
-# Checked against the downloaded release asset on 2026-11-11.
-ORT_MACOS_SHA256 = "c4fceacfc53765d0869dc9180c31ec91054d149017a99d1e80ffe28dc79596de"
-# ``lib/libonnxruntime.dylib`` is a regular file in this tgz (a copy of
-# ``libonnxruntime.1.28.2.dylib``); a symlink there would be followed.
-ORT_MACOS_FILES = (
-    ("lib/libonnxruntime.dylib", "libonnxruntime.dylib"),
-    ("LICENSE", "onnxruntime-LICENSE.txt"),
-    ("ThirdPartyNotices.txt", "onnxruntime-ThirdPartyNotices.txt"),
-)
-
 PLATFORMS = {
-    "win-x64": Ort("win-x64", f"onnxruntime-win-x64-{ORT_VERSION}", ".zip", ORT_URL, ORT_SHA256,
-                   ORT_FILES, ORT_VERSION, True),
-    "macos-arm64": Ort("macos-arm64", ORT_MACOS_STEM, ".tgz", ORT_MACOS_URL, ORT_MACOS_SHA256,
-                       ORT_MACOS_FILES, f"{ORT_VERSION}-osx-arm64", False),
+    "win-x64": Ort("win-x64", ORT_FILES, ORT_VERSION, True),
+    "macos-arm64": Ort("macos-arm64", ORT_MACOS_FILES, f"{ORT_VERSION}-osx-arm64", False),
 }
 
 
@@ -104,7 +92,7 @@ def host_platform() -> str:
 
 
 VC_DLLS = ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll")
-# The oldest VC++ runtime ORT 1.28.2 may load with: VS 2022 17.10 (14.40),
+# The oldest VC++ runtime ORT 1.28 may load with: VS 2022 17.10 (14.40),
 # the first with the constexpr std::mutex its builds rely on.
 MIN_VC_VERSION = (14, 40, 33810, 0)
 VERSIONED = ("msvcp140.dll", "vcruntime140.dll")
@@ -120,7 +108,7 @@ def sha256(path: Path) -> str:
 
 def _cached(out: Path, files=ORT_FILES) -> bool:
     """True when ``out`` holds every ORT file with the SHA-256 recorded at
-    extraction (``SHA256SUMS``, from the hash-checked archive)."""
+    extraction (``SHA256SUMS``, from the hash-checked package)."""
     try:
         lines = (out / CACHE_SUMS).read_text(encoding="ascii").splitlines()
     except (OSError, ValueError):
@@ -132,66 +120,59 @@ def _cached(out: Path, files=ORT_FILES) -> bool:
     return all((out / name).is_file() and want.get(name) == sha256(out / name) for _, name in files)
 
 
-def _tgz_reader(t: tarfile.TarFile, path: Path, root: str):
-    """Reads a member under ``root`` of the open tgz ``t``, following
-    symlinks inside the archive (never out of it)."""
+def download(cache: Path, url: str, expected: str) -> Path:
+    """The package in ``cache``, downloaded only when it is missing or does
+    not match ``expected``. Both platforms share this one file."""
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / ORT_PACKAGE
+    if path.is_file() and sha256(path) == expected:
+        return path
+    tmp = path.with_name(path.name + ".part")
+    with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+    got = sha256(tmp)
+    if got != expected:
+        tmp.unlink()
+        raise SystemExit(f"{url}: SHA-256 {got} is not the pinned {expected}")
+    tmp.replace(path)
+    return path
 
-    def read(member: str) -> bytes:
-        info = t.getmember(root + member)
-        for _ in range(8):
-            if not info.issym():
-                break
-            target = os.path.normpath(os.path.join(os.path.dirname(info.name), info.linkname))
-            info = t.getmember(target.replace(os.sep, "/"))
-        f = t.extractfile(info) if info.isfile() else None
-        if f is None:
-            raise SystemExit(f"{path}: {root + member} is not a regular file")
-        return f.read()
 
-    return read
+def _read_regular(z: zipfile.ZipFile, path: Path, member: str) -> bytes:
+    """A member of the package; refuses a folder or a symlink entry."""
+    info = z.getinfo(member)
+    mode = info.external_attr >> 16
+    if info.is_dir() or info.external_attr & 0x10 or stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+        raise SystemExit(f"{path}: {member} is not a regular file")
+    return z.read(info)
 
 
 def fetch(cache: Path = CACHE, url: str | None = None, expected: str | None = None,
           platform: str = "win-x64") -> Path:
     """The folder with the extracted ORT files of ``platform``, downloading
-    its archive once. A cached file is used only while its SHA-256 matches
+    the package once. A cached file is used only while its SHA-256 matches
     the one recorded when it was extracted (#55); else the folder is
     extracted again."""
     ort = PLATFORMS[platform]
-    url = url or ort.url
-    expected = expected or ort.sha256
     out = cache / ort.folder
     if _cached(out, ort.files):
         return out
-    cache.mkdir(parents=True, exist_ok=True)
-    zpath = cache / f"{ort.stem}{ort.suffix}"
-    if not zpath.is_file() or sha256(zpath) != expected:
-        tmp = zpath.with_suffix(".part")
-        with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as f:
-            shutil.copyfileobj(r, f, 1 << 20)
-        got = sha256(tmp)
-        if got != expected:
-            tmp.unlink()
-            raise SystemExit(f"{url}: SHA-256 {got} is not the pinned {expected}")
-        tmp.replace(zpath)
+    pkg = download(cache, url or ORT_URL, expected or ORT_SHA256)
     # Extract into a folder of its own and rename it into place, so a run
     # that stops part-way never leaves files a later run accepts.
     part = cache / f"{ort.folder}.part"
     shutil.rmtree(part, ignore_errors=True)
     part.mkdir()
-    root = f"{ort.stem}/"
     sums = []
-    archive = zipfile.ZipFile(zpath) if ort.suffix == ".zip" else tarfile.open(zpath, "r:gz")
-    with archive:
-        if isinstance(archive, zipfile.ZipFile):
-            def read(member: str) -> bytes:
-                return archive.read(root + member)
-        else:
-            read = _tgz_reader(archive, zpath, root)
-        for member, name in ort.files:
-            data = read(member)
-            (part / name).write_bytes(data)
-            sums.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
+    try:
+        with zipfile.ZipFile(pkg) as z:
+            for member, name in ort.files:
+                data = _read_regular(z, pkg, member)
+                (part / name).write_bytes(data)
+                sums.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
+    except BaseException:
+        shutil.rmtree(part, ignore_errors=True)
+        raise
     (part / CACHE_SUMS).write_bytes("".join(sums).encode("ascii"))
     shutil.rmtree(out, ignore_errors=True)
     part.rename(out)
