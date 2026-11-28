@@ -4,8 +4,7 @@
   "version": "0.38.4",
   "description": "Text-to-speech for Claude Code on Windows and macOS.",
   "author": {
-    "name": "Max Aubert",
-    "email": "aubert@post.com"
+    "name": "Max Aubert"
   },
   "license": "MIT",
   "homepage": "https://github.com/Maxaubert/Sonara",
