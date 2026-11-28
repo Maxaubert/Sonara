@@ -74,7 +74,7 @@ The command does not rebuild everything: re-apply the edits a `SOURCES.md` lists
 - Live check:
   `SONARA_KOKORO_MODELS=<folder with the two model files> cargo test -p sonara-engine --release --test kokoro_live -- --ignored --nocapture`
 - macOS: `python packaging/runtime_dlls.py stage target/<debug|release>` stages
-  `libonnxruntime.dylib` (the pinned `osx-arm64` build, no VC++ step) instead; `--platform`
+  `libonnxruntime.dylib` (from the same pinned NuGet package, no VC++ step) instead; `--platform`
   picks another platform's asset. The same live check runs there. Measured 2026-11-11 on Apple
   Silicon (release build, CPU provider, other builds running alongside): load 1.9 s, first call
   0.35 s, corpus RTF 0.30, peak memory 777 MB.
