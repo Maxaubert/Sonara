@@ -332,7 +332,9 @@ impl G2P {
 
             // Update context for previous tokens based on current phonemes
             if i > 0 && tokens[i].phonemes.is_some() {
-                let vowels = "AIOQWYaiuæɑɒɔəɛɜɪʊʌᵻ";
+                // The lexicon also starts words with "ɐ" and "ɚ" ("about",
+                // "around") and with the bare "e" and "o" of a diphthong.
+                let vowels = "AIOQWYaiuæɑɒɔəɛɜɪʊʌᵻɐɚeo";
                 let consonants = "bdfhjklmnpstvwzðŋɡɹɾʃʒʤʧθ";
                 let phonemes = tokens[i].phonemes.as_ref().unwrap();
                 for c in phonemes.chars() {
