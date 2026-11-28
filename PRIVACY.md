@@ -195,7 +195,7 @@ below use `/` there instead of `\`, and the programs have no `.exe`.
 |---|---|
 | `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, reading mode, what the flush hotkey skips, summary options and your own summary instructions, the troubleshooting log on or off), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
 | `keymap.json` | Your hotkey bindings |
-| `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed) |
+| `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed). `session_prefs.json.bad` is a copy of a file that could not be read |
 | `engines.json` | The external speech engines you added: for each its id, kind, label, address, model, voice, where its key comes from (`credman`, on macOS `keychain`, `env:NAME` or none), for an `env:` key the address you allow it to go to (`key_origin`), and its options. Never a key. `engines.json.bad` is a copy of a file that could not be read |
 | `earcons\` | Your own chimes, if you put any there: `<kind>.wav` files (for example `session_change.wav`) that Sonara plays instead of its built-in sounds. Created empty at start; Sonara only reads it |
 
