@@ -34,6 +34,8 @@ export interface ConnectOptions {
   takeoverTimeoutMs?: number;
   /** Wait between takeover retries (default 250 ms). */
   takeoverRetryMs?: number;
+  /** Bound the connect and each `hello` (default 5000 ms). */
+  connectTimeoutMs?: number;
 }
 
 const CONNECT_TIMEOUT_MS = 5000;
@@ -45,6 +47,7 @@ class Incompatible extends Error {}
 interface Greeting {
   hello: Record<string, unknown>;
   require: string[];
+  timeoutMs: number;
 }
 
 /**
@@ -74,7 +77,7 @@ export async function connect(opts: ConnectOptions): Promise<SonaraClient> {
     extensions: opts.extensions ?? [],
   };
   if (opts.keepAlive) hello.keep_alive = true;
-  const greeting: Greeting = { hello, require };
+  const greeting: Greeting = { hello, require, timeoutMs: opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS };
 
   const running = liveRuntime(home);
   if (running) {
@@ -123,9 +126,9 @@ export async function connect(opts: ConnectOptions): Promise<SonaraClient> {
  */
 async function greet(info: RuntimeInfo, g: Greeting): Promise<SonaraClient | null> {
   const dial = async (): Promise<Connection> => {
-    const conn = await Connection.open(info.port, CONNECT_TIMEOUT_MS);
+    const conn = await Connection.open(info.port, g.timeoutMs);
     try {
-      await conn.request("hello", { ...g.hello, token: info.token });
+      await conn.request("hello", { ...g.hello, token: info.token }, { timeoutMs: g.timeoutMs });
     } catch (err) {
       conn.close();
       throw err;
@@ -135,19 +138,20 @@ async function greet(info: RuntimeInfo, g: Greeting): Promise<SonaraClient | nul
 
   let conn: Connection;
   try {
-    conn = await Connection.open(info.port, CONNECT_TIMEOUT_MS);
+    conn = await Connection.open(info.port, g.timeoutMs);
   } catch {
     return null;
   }
   let reply: Record<string, unknown>;
   try {
-    reply = await conn.request("hello", { ...g.hello, token: info.token });
+    reply = await conn.request("hello", { ...g.hello, token: info.token }, { timeoutMs: g.timeoutMs });
   } catch (err) {
     conn.close();
     if (err instanceof SonaraError && (err.code === "E_INCOMPATIBLE" || err.code === "E_UNSUPPORTED")) {
       throw new Incompatible(err.message);
     }
-    if (err instanceof SonaraError && err.code === "E_CLOSED") return null;
+    // A runtime that accepts the socket but never answers counts as unreachable.
+    if (err instanceof SonaraError && (err.code === "E_CLOSED" || err.code === "E_TIMEOUT")) return null;
     throw err;
   }
   const helloInfo = reply as unknown as HelloInfo;
@@ -171,20 +175,21 @@ async function greet(info: RuntimeInfo, g: Greeting): Promise<SonaraClient | nul
 async function takeOver(home: string, opts: ConnectOptions, why: string): Promise<void> {
   const deadline = Date.now() + (opts.takeoverTimeoutMs ?? 30000);
   const retryMs = opts.takeoverRetryMs ?? 250;
+  const connectMs = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
   const client = { name: opts.clientName, version: opts.clientVersion ?? VERSION };
   for (;;) {
     const cur = liveRuntime(home);
     if (!cur) return;
     let conn: Connection | null = null;
     try {
-      conn = await Connection.open(cur.port, CONNECT_TIMEOUT_MS);
-      await conn.request("hello", { token: cur.token, client, takeover: true });
+      conn = await Connection.open(cur.port, connectMs);
+      await conn.request("hello", { token: cur.token, client, takeover: true }, { timeoutMs: connectMs });
       conn.close();
       if (await waitExit(cur.pid, EXIT_WAIT_MS)) return;
     } catch (err) {
       conn?.close();
       const code = err instanceof SonaraError ? err.code : "";
-      if (code !== "E_BUSY" && code !== "E_CLOSED") {
+      if (code !== "E_BUSY" && code !== "E_CLOSED" && code !== "E_TIMEOUT") {
         throw new SonaraError(
           "E_INCOMPATIBLE",
           `the running Sonara cannot serve this client (${why}) and refused a takeover: ${(err as Error).message}`,

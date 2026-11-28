@@ -388,3 +388,36 @@ describe("extension namespaces", () => {
     ]);
   });
 });
+
+describe("bounded hello and failed subscribe", () => {
+  const conns = () => {
+    try {
+      return readFileSync(join(home, "conns.log"), "utf8").trim().split(/\r?\n/);
+    } catch {
+      return [];
+    }
+  };
+  const openCount = () => conns().filter((l) => l === "open").length - conns().filter((l) => l === "close").length;
+
+  it("falls through when a runtime accepts the socket but never answers hello", async () => {
+    fake = await startFake(home, { silentHello: true });
+    const t0 = Date.now();
+    await rejectsWith(open({ connectTimeoutMs: 300 }), "E_NOT_RUNNING");
+    assert.ok(Date.now() - t0 < 4000, "connect() settled in bounded time");
+    assert.ok(await waitFor(() => openCount() === 0, 3000), "the hung socket was closed");
+  });
+
+  it("closes the event socket when subscribe is refused, and opens one new socket per retry", async () => {
+    fake = await startFake(home, { subscribeError: "E_UNSUPPORTED" });
+    const c = await open();
+    const logs = [];
+    c.onLog((l) => logs.push(l));
+    await rejectsWith(c.eventsReady(), "E_UNSUPPORTED");
+    assert.match(logs[0].message, /event stream failed/);
+    assert.ok(await waitFor(() => openCount() === 1, 3000), "only the request socket stays open");
+    c.onState(() => undefined);
+    await rejectsWith(c.eventsReady(), "E_UNSUPPORTED");
+    assert.ok(await waitFor(() => conns().filter((l) => l === "open").length === 3, 3000));
+    assert.ok(await waitFor(() => openCount() === 1, 3000), "the open count never exceeds one extra");
+  });
+});

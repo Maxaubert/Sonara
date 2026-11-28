@@ -7,7 +7,9 @@
 // Options: home (required), helloError (a code every plain hello fails
 // with), busyTakeovers (how many takeover hellos answer E_BUSY first; -1:
 // always), protocolMajor (in the hello reply), delays (`{type: ms}`: how
-// long a request of that type waits before its reply).
+// long a request of that type waits before its reply), subscribeError (a
+// code every subscribe fails with), silentHello (a plain hello is never
+// answered). Opened and closed sockets are appended to <home>/conns.log.
 // Requests are appended to <home>/requests.jsonl.
 import { appendFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -50,6 +52,7 @@ function handle(conn, msg) {
         }, 50);
         return;
       }
+      if (opts.silentHello) return;
       if (opts.helloError) return fail(opts.helloError, "scripted hello failure");
       return reply(helloFields());
     case "speak":
@@ -67,6 +70,7 @@ function handle(conn, msg) {
         voices: [{ id: "fake-1", name: "Fake", language: "en-US", engine: "fake", license_class: "permissive", installed: true }],
       });
     case "subscribe":
+      if (opts.subscribeError) return fail(opts.subscribeError, "scripted subscribe failure");
       reply({ events: msg.events });
       conn.write(JSON.stringify({ event: "state", seq: 1, now_playing: null, queued: 0, paused: false, muted: false, volume: 100, rate: 200, voice: null, engine_status: { engine: "fake" } }) + "\n");
       conn.write(JSON.stringify({ event: "item", item_id: 1, phase: "started" }) + "\n");
@@ -85,6 +89,8 @@ function handle(conn, msg) {
 
 const server = createServer((conn) => {
   conn.setEncoding("utf8");
+  appendFileSync(join(opts.home, "conns.log"), "open\n");
+  conn.on("close", () => appendFileSync(join(opts.home, "conns.log"), "close\n"));
   let buf = "";
   conn.on("data", (chunk) => {
     buf += chunk;
