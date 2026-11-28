@@ -19,14 +19,14 @@ Hand-maintained (`packaging/notices/models-and-data.md`). Each entry says whethe
 
 ### Microsoft ONNX Runtime
 
-- Source: Microsoft, https://github.com/microsoft/onnxruntime, the official CPU build `onnxruntime-win-x64-1.28.2.zip` (SHA-256 `c4eedd29489d5feca21866d054638416f3655bf6b18851b3b6b85c8313e95c35`).
+- Source: Microsoft, the official NuGet package `Microsoft.ML.OnnxRuntime` 1.28.0 (CPU build), https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.28.0/microsoft.ml.onnxruntime.1.28.0.nupkg (SHA-256 `769d1d3ea8ab6cd69f737c9dd4d4462aa4ad0ccfa106eaf506efc40d7bead5db`): `runtimes/win-x64/native/onnxruntime.dll` on Windows, `runtimes/osx-arm64/native/libonnxruntime.dylib` on macOS, and the package's `LICENSE` and `ThirdPartyNotices.txt`. Project: https://onnxruntime.ai.
 - Licence: MIT, Copyright (c) Microsoft Corporation. Full text below. Its own third-party notices ship as `onnxruntime-ThirdPartyNotices.txt`.
 - Ships: yes, as `onnxruntime.dll` next to `sonarad.exe`, with `onnxruntime-LICENSE.txt` and `onnxruntime-ThirdPartyNotices.txt` (`packaging/runtime_dlls.py`). `sonarad.exe` loads it at run time by its full path; without it the Kokoro engine is unavailable and Windows' voices speak.
 
 ### Microsoft Visual C++ runtime
 
 - `sonarad.exe` and `sonara-hook.exe` link the C runtime statically (`+crt-static`) and need no Visual C++ redistributable; they use the Universal CRT that Windows 10 and 11 provide.
-- `onnxruntime.dll` imports `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`. These ship app-locally next to it, copied from the Visual Studio redistributable folder (`VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT`). `runtime_dlls.py` refuses a `msvcp140.dll` or `vcruntime140.dll` older than 14.40.33810.0 (VS 2022 17.10, the oldest runtime ONNX Runtime 1.28.2 runs with) and prints the versions it stages; the shipped version is that of the build runner's newest Visual Studio (14.51.36247.0 on the development PC, 2026-10-02).
+- `onnxruntime.dll` imports `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`. These ship app-locally next to it, copied from the Visual Studio redistributable folder (`VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT`). `runtime_dlls.py` refuses a `msvcp140.dll` or `vcruntime140.dll` older than 14.40.33810.0 (VS 2022 17.10, the oldest runtime ONNX Runtime 1.28 runs with) and prints the versions it stages; the shipped version is that of the build runner's newest Visual Studio (14.51.36247.0 on the development PC, 2026-10-02).
 - Licence: Microsoft Visual C++ Redistributable, "Distributable Code" under the Microsoft Visual Studio licence terms, which allow app-local deployment of these files. A bundler may instead install the redistributable with its own installer.
 - Ships: yes (the four DLLs above).
 
