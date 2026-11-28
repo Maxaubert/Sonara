@@ -8,7 +8,7 @@
 //! ```
 //!
 //! (On macOS: `export SONARA_KOKORO_MODELS=...`; `runtime_dlls.py fetch`
-//! fetches the `osx-arm64` build there.) `SONARA_ORT_DYLIB` overrides the
+//! extracts the `osx-arm64` library there.) `SONARA_ORT_DYLIB` overrides the
 //! library (default: the fetched one under `target/onnxruntime/`);
 //! `SONARA_KOKORO_WAV=<folder>` writes each line as a WAV for listening.
 //! Nothing is downloaded and nothing is played: the test copies the model
@@ -77,9 +77,9 @@ fn peak_ram_mb() -> f64 {
 fn fetched_runtime() -> PathBuf {
     let ort = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/onnxruntime");
     if cfg!(target_os = "macos") {
-        ort.join("1.28.2-osx-arm64/libonnxruntime.dylib")
+        ort.join("1.28.0-osx-arm64/libonnxruntime.dylib")
     } else {
-        ort.join("1.28.2/onnxruntime.dll")
+        ort.join("1.28.0/onnxruntime.dll")
     }
 }
 
