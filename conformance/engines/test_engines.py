@@ -9,18 +9,12 @@ import json
 import socket
 import sys
 
-from harness import wait_until
+from harness import ok, wait_until
 
 SECRET = "sk-conformance-secret-0123456789"
 # The name of the OS key store a view and engines.json use: "keychain" on
 # macOS, "credman" elsewhere; a profile may send either.
 OS_KEY_REF = "keychain" if sys.platform == "darwin" else "credman"
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
 
 
 def add(c, profile, secret=SECRET):

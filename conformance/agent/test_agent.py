@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from harness import long_text
+from harness import heard, long_text, ok, quiet
 
 LONG = long_text(1)
 TWO_LONG = long_text(2)
@@ -34,32 +34,11 @@ def agent_client(rt, announce=False, policy="earcon_only"):
     return c
 
 
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
-
-
 def stream(c, channel, delta, index=0, t=None, final=True):
     msg = {"type": "stream", "channel": channel, "delta": delta, "index": index, "final": final}
     if t is not None:
         msg["t"] = t
     return ok(c, msg)
-
-
-def heard(c, count):
-    """The next ``count`` items to start, as (first chunk text, channel)."""
-    out, last = [], getattr(c, "last_item", None)
-    while len(out) < count:
-        e = c.next_event(lambda e: e.get("event") == "state")
-        np = e["now_playing"]
-        if np is None:
-            continue
-        if np["item_id"] != last:
-            last = np["item_id"]
-            out.append((np["text"], np.get("channel")))
-    c.last_item = last
-    return out
 
 
 def chunks_heard(c, count):
@@ -89,20 +68,6 @@ def no_earcon(c, seconds=0.5):
     except AssertionError:
         return
     raise AssertionError(f"unexpected earcon {e}")
-
-
-def quiet(c, seconds=0.6):
-    """Nothing starts for ``seconds``."""
-    end = time.monotonic() + seconds
-    while True:
-        left = end - time.monotonic()
-        if left <= 0:
-            return
-        try:
-            e = c.next_event(lambda e: e.get("event") == "state", timeout=left)
-        except AssertionError:
-            return
-        assert e["now_playing"] is None, e
 
 
 def snapshot(rt):

@@ -5,11 +5,15 @@ channel and multi-session daemon tests (the parts that are not agent
 features)."""
 from __future__ import annotations
 
-import time
 
-from harness import SHORT_SENTENCE, long_text
+import harness
+from harness import SHORT_SENTENCE, long_text, ok
 
 LONG = long_text(1)
+
+
+def _any(e):
+    return True
 
 
 def channels_client(rt):
@@ -21,47 +25,19 @@ def channels_client(rt):
     return c
 
 
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
-
-
 def open_two(c, policy="queue"):
     ok(c, {"type": "channel_open", "channel": "a", "label": "Alpha", "host_tab": "tab-a", "policy": policy})
     ok(c, {"type": "channel_open", "channel": "b", "label": "Beta", "policy": policy})
 
 
 def heard(c, count):
-    """The next ``count`` items to start, as (first chunk text, channel),
-    read from the state events in order (an item counts once, across
-    calls)."""
-    out, last = [], getattr(c, "last_item", None)
-    while len(out) < count:
-        e = c.next_event()
-        if e.get("event") != "state" or e["now_playing"] is None:
-            continue
-        np = e["now_playing"]
-        if np["item_id"] != last:
-            last = np["item_id"]
-            out.append((np["text"], np.get("channel")))
-    c.last_item = last
-    return out
+    """The next ``count`` items to start; also consumes the other events."""
+    return harness.heard(c, count, take=_any)
 
 
 def quiet(c, seconds=0.6):
-    """Nothing starts for ``seconds``."""
-    end = time.monotonic() + seconds
-    while True:
-        left = end - time.monotonic()
-        if left <= 0:
-            return
-        try:
-            e = c.next_event(timeout=left)
-        except AssertionError:
-            return
-        if e.get("event") == "state":
-            assert e["now_playing"] is None, e
+    """Nothing starts for ``seconds``; also consumes the other events."""
+    harness.quiet(c, seconds, take=_any)
 
 
 def is_long(heard_item, channel):

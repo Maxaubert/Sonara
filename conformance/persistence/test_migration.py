@@ -13,6 +13,8 @@ import sys
 
 import pytest
 
+from harness import ok
+
 # Combos as the runtime labels them: the macOS names and order on macOS.
 MAC_LABELS = {"Win+Alt+": "Option+Cmd+", "Ctrl+Alt+": "Ctrl+Option+"}
 
@@ -74,12 +76,6 @@ def profile(tmp_path):
     p = tmp_path / "profile"
     p.mkdir()
     return {"USERPROFILE": str(p), "HOME": str(p)}
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
 
 
 def get(c, key):

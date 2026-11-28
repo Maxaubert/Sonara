@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.parse
 
-from harness import TIMEOUT, long_text, wait_until
+from harness import TIMEOUT, long_text, ok, wait_until
 
 LONG = long_text(3)
 
@@ -60,12 +60,6 @@ def volume(rt, pid):
 
 def media(rt, app):
     return next(m for m in read_world(rt.fake_system)["media"] if m["app"] == app)
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
 
 
 def system_client(rt, **fields):

@@ -16,6 +16,8 @@ import json
 import sys
 from pathlib import Path
 
+from harness import ok
+
 SCRIPT = r'''
 import io, json, os, sys, wave
 text = sys.stdin.buffer.read().decode("utf-8")
@@ -38,12 +40,6 @@ sys.stdout.buffer.write(buf.getvalue())
 FORBIDDEN = ("a command engine runs a program on this PC, so it is never added or changed over "
              "the protocol: add it with `sonara engines add <id> --kind command`, or in "
              "engines.json")
-
-
-def ok(c, msg):
-    r = c.request(msg)
-    assert r["ok"] is True, (msg, r)
-    return r
 
 
 def program(tmp_path: Path, *extra: str) -> tuple[dict, Path]:

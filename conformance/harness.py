@@ -42,6 +42,51 @@ def long_text(n: int) -> str:
     return " ".join(LONG_SENTENCE.replace("This sentence", f"Sentence {i}") for i in range(n))
 
 
+def ok(c, msg):
+    """Send ``msg`` and assert the reply is ``ok``; return the reply."""
+    r = c.request(msg)
+    assert r["ok"] is True, (msg, r)
+    return r
+
+
+def _state_only(e):
+    return e.get("event") == "state"
+
+
+def heard(c, count, take=_state_only):
+    """The next ``count`` items to start, as (first chunk text, channel),
+    read from the state events in order (an item counts once, across
+    calls). ``take`` picks the events this reads off the queue (default:
+    state events only; other events stay queued). Pass ``lambda e: True``
+    to also consume every other event, as the channels tests do."""
+    out, last = [], getattr(c, "last_item", None)
+    while len(out) < count:
+        e = c.next_event(take)
+        if e.get("event") != "state" or e["now_playing"] is None:
+            continue
+        np = e["now_playing"]
+        if np["item_id"] != last:
+            last = np["item_id"]
+            out.append((np["text"], np.get("channel")))
+    c.last_item = last
+    return out
+
+
+def quiet(c, seconds=0.6, take=_state_only):
+    """Nothing starts for ``seconds``. ``take`` is as for ``heard``."""
+    end = time.monotonic() + seconds
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            return
+        try:
+            e = c.next_event(take, timeout=left)
+        except AssertionError:
+            return
+        if e.get("event") == "state":
+            assert e["now_playing"] is None, e
+
+
 def find_sonarad() -> Path | None:
     env = os.environ.get("SONARAD")
     if env:
