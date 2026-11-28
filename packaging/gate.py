@@ -12,7 +12,10 @@ gate runs when a changed path starts with one of its triggers (GATES):
   python       ruff, the version check and tests/repo (always, when anything changed)
   e2e          the settings-page browser tests (fails without the e2e dependency group)
   sdk          the SDKs, the player demo, the npm runtime package, the smoke hosts
-               and the publishable packages (packaging/build_packages.py, #279)
+               and the publishable packages (packaging/build_packages.py, #279).
+               The npm runtime package, the Node smoke host (it packs that
+               package) and the packages step build the Windows runtime
+               (sonarad.exe), so they run on Windows only.
   embed        the embedder e2e suite (tests/embed, #274): Node, Python and raw
                protocol host apps on the packed packages, the wheel and the
                release zip, with the audio checked through --output wav:<dir>
@@ -62,6 +65,12 @@ REQUIRED_CHECKS = ("check", "rust", "conformance", "clients", "deny")
 ADVISORY_CHECKS = ("macos",)
 # The executables' suffix on this platform.
 EXE = ".exe" if sys.platform == "win32" else ""
+
+
+def _on_windows() -> bool:
+    """True on Windows; one place to read the platform so a test can patch it."""
+    return sys.platform == "win32"
+
 
 # Files every crate builds with: a change here tests the whole workspace.
 WORKSPACE_FILES = ("Cargo.toml", "Cargo.lock", ".cargo/", "rust-toolchain.toml", "rustfmt.toml",
@@ -223,15 +232,20 @@ def steps_for(gate: str, crates: Optional[List[str]], nextest: bool) -> List[Ste
                     _step(where + ": test", [npm, "test"], where, release)]
         demo = "examples/player-demo"
         out += [_step(demo + ": npm ci", [npm, "ci"], demo),
-                _step(demo + ": build", [npm, "run", "build"], demo),
-                _step("npm-runtime: build", [npm, "run", "build"], "packaging/npm-runtime"),
-                _step("npm-runtime: test", [npm, "test"], "packaging/npm-runtime", release),
-                _step("Node smoke host", [node, "packaging/smoke/run-node.mjs"], env=release),
-                _step("clients/python tests", [py, "-m", "pytest", "clients/python/tests", "-q"], env=release),
-                _step("Python smoke host", [py, "packaging/smoke/python_host.py"], env=host),
-                # What release.yml publishes (#279): build, contents, publish dry run.
-                _step("packages: build, check, publish dry run",
-                      [py, "packaging/build_packages.py", "--publish-dry-run"])]
+                _step(demo + ": build", [npm, "run", "build"], demo)]
+        # The npm runtime package and the publishable packages build sonarad.exe
+        # (@sonara/runtime-win32-x64); the Node smoke host packs that package.
+        windows = _on_windows()
+        if windows:
+            out += [_step("npm-runtime: build", [npm, "run", "build"], "packaging/npm-runtime"),
+                    _step("npm-runtime: test", [npm, "test"], "packaging/npm-runtime", release),
+                    _step("Node smoke host", [node, "packaging/smoke/run-node.mjs"], env=release)]
+        out += [_step("clients/python tests", [py, "-m", "pytest", "clients/python/tests", "-q"], env=release),
+                _step("Python smoke host", [py, "packaging/smoke/python_host.py"], env=host)]
+        if windows:
+            # What release.yml publishes (#279): build, contents, publish dry run.
+            out += [_step("packages: build, check, publish dry run",
+                          [py, "packaging/build_packages.py", "--publish-dry-run"])]
         return out
     if gate == "embed":
         npm = shutil.which("npm") or "npm"
